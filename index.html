@@ -2,7 +2,9 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#02060d" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Gatebreaker – Prototyp</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2212%22 fill=%22none%22 stroke=%22%234fc3ff%22 stroke-width=%224%22/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./src/ui/style.css" />
@@ -14,6 +16,8 @@
     <div class="logo">GATE<span>BREAKER</span></div>
     <div id="resources"></div>
     <nav id="views">
+      <button id="btn-left" class="mobile-only" title="Infopanel ein/aus">☰ Info</button>
+      <button id="btn-right" class="mobile-only" title="Flotten ein/aus">⚑ Flotten</button>
       <button data-view="galaxy" title="Galaxie (G)">[G] Galaxie</button>
       <button data-view="system" title="System (S)">[S] System</button>
       <button data-view="battle" id="btn-battle" class="alert hidden" title="Schlacht (B)">[B] Schlacht</button>
@@ -43,6 +47,7 @@
   <div id="toasts"></div>
   <div id="modal" class="hidden"><div class="panel" id="modal-body"></div></div>
   <footer id="help">Maus: Ziehen = drehen · Rad = Zoom · Rechtsklick = verschieben · Klick = auswählen · Doppelklick auf System = betreten · G/S/B = Ansichten · T = Taktikansicht</footer>
+  <footer id="help-touch">1 Finger = drehen · 2 Finger = zoomen/verschieben · Tippen = auswählen · Doppeltippen auf System = betreten</footer>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

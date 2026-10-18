@@ -41,17 +41,31 @@ $('#btn-new').addEventListener('click', () => {
 $('#btn-report').addEventListener('click', () => state.lastReport ? openModal(reportHtml(state.lastReport)) : toast('info', 'Noch kein Gefechtsbericht.'));
 
 // ---------- Auswahl in 3D ----------
-let down = null;
-$('#c').addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+// Maus und Touch über Pointer-Events: Tippen = auswählen, Doppeltippen/Doppelklick auf System = betreten.
+// Gesten mit mehreren Fingern (Pinch-Zoom, Zwei-Finger-Verschieben) zählen nie als Tippen.
+let down = null, lastTap = null; const pointers = new Set();
+$('#c').addEventListener('pointerdown', e => { pointers.add(e.pointerId); if (pointers.size === 1) down = { x: e.clientX, y: e.clientY, t: performance.now(), multi: false }; else if (down) down.multi = true; });
+$('#c').addEventListener('pointercancel', e => { pointers.delete(e.pointerId); down = null; });
 $('#c').addEventListener('pointerup', e => {
-  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
-  const hit = R.pick(e); if (!hit) return;
-  if (hit.system) ui.selectedSystem = hit.system;
+  pointers.delete(e.pointerId);
+  const d = down; if (pointers.size === 0) down = null;
+  if (!d || d.multi || pointers.size > 0) return;
+  const slop = e.pointerType === 'touch' ? 12 : 5;
+  if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > slop || performance.now() - d.t > 600) return;
+  const hit = R.pick(e);
+  const now = performance.now();
+  const dbl = lastTap && now - lastTap.t < 380 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30;
+  lastTap = dbl ? null : { t: now, x: e.clientX, y: e.clientY };
+  if (!hit) return;
+  if (hit.system) { ui.selectedSystem = hit.system; if (dbl && ui.view === 'galaxy') { setView('system'); return; } }
   if (hit.planet) ui.selectedPlanet = hit.planet;
   if (hit.fleet) { const f = state.fleets.find(x => x.id === hit.fleet); if (f?.owner === 'player') ui.selectedFleet = f.id; }
   dirty = true;
 });
-$('#c').addEventListener('dblclick', e => { const hit = R.pick(e); if (hit?.system) { ui.selectedSystem = hit.system; setView('system'); } });
+// Mobile: Panels ein-/ausklappen
+$('#btn-left').addEventListener('click', () => { document.body.classList.toggle('hide-left'); });
+$('#btn-right').addEventListener('click', () => { document.body.classList.toggle('hide-right'); });
+if (matchMedia('(pointer: coarse)').matches) { document.body.classList.add('touch'); if (innerWidth < 1000) document.body.classList.add('hide-right'); }
 
 // ---------- Panel-Aktionen ----------
 function act(name, id, el) {
@@ -147,4 +161,4 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) Sim.s
 setView('galaxy');
 requestAnimationFrame(frame);
 // Test-/Debug-Zugriff
-window.gb = { get state() { return state; }, Sim, ui, setView };
+window.gb = { get state() { return state; }, Sim, ui, setView, R };

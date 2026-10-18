@@ -1,0 +1,12 @@
+import puppeteer from 'puppeteer-core';
+const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader'] });
+const p = await b.newPage(); await p.setViewport({ width: 1600, height: 900 });
+const errs = []; p.on('console', m => { if (['error','warn'].includes(m.type())) errs.push(m.text()); }); p.on('pageerror', e => errs.push(e.message));
+const r = await p.goto('https://gatebreaker.onrender.com/', { waitUntil: 'networkidle0' });
+await new Promise(r => setTimeout(r, 3000));
+console.log('status', r.status(), 'title', await p.title());
+console.log('time', await p.evaluate(() => window.gb?.state.time), 'res', await p.$eval('#resources', e => e.innerText.replace(/\n/g,' ')));
+await p.click('[data-act="enter"]'); await new Promise(r => setTimeout(r, 800));
+console.log('view', await p.evaluate(() => gb.ui.view));
+await p.screenshot({ path: 'screenshots/07-live-render.png' });
+console.log('errors', errs.length ? errs : 'keine'); await b.close();

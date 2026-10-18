@@ -46,13 +46,14 @@ const GEOS = {}; for (const t in SHIPS) GEOS[t] = shipGeometry(t);
 
 export class Renderer {
   constructor(canvas, labelsEl) {
-    this.r = new THREE.WebGLRenderer({ canvas, antialias: true }); this.r.setPixelRatio(Math.min(2, devicePixelRatio));
+    this.r = new THREE.WebGLRenderer({ canvas, antialias: true }); this.r.setPixelRatio(Math.min(matchMedia('(pointer: coarse)').matches ? 1.5 : 2, devicePixelRatio));
     this.labels = new CSS2DRenderer(); labelsEl.appendChild(this.labels.domElement); this.labels.domElement.style.position = 'absolute'; this.labels.domElement.style.inset = '0'; this.labels.domElement.style.pointerEvents = 'none';
     this.view = 'galaxy'; this.ray = new THREE.Raycaster(); this.mouse = new THREE.Vector2();
     this.views = { galaxy: this.makeGalaxy(), system: null, battle: null };
     this.resize(); addEventListener('resize', () => this.resize());
   }
-  makeCam(pos) { const cam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 3000); cam.position.set(...pos); const ctl = new OrbitControls(cam, this.r.domElement); ctl.enableDamping = true; ctl.enabled = false; return { cam, ctl }; }
+  makeCam(pos) { const cam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 3000); cam.position.set(...pos); const ctl = new OrbitControls(cam, this.r.domElement); ctl.enableDamping = true; ctl.enabled = false;
+    ctl.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }; ctl.zoomToCursor = true; return { cam, ctl }; }
   resize() { this.r.setSize(innerWidth, innerHeight, false); this.labels.setSize(innerWidth, innerHeight); for (const v of Object.values(this.views)) if (v) { v.cam.aspect = innerWidth / innerHeight; v.cam.updateProjectionMatrix(); } }
   setView(name) {
     for (const [k, v] of Object.entries(this.views)) if (v) { v.ctl.enabled = k === name; v.scene.visible = k === name; if (k !== name) v.scene.traverse(o => { if (o.isCSS2DObject) o.element.style.display = 'none'; }); }

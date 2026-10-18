@@ -1,0 +1,6 @@
+{
+  "appId": "com.gatebreaker.game",
+  "appName": "Gatebreaker",
+  "webDir": "dist",
+  "android": { "backgroundColor": "#02060d" }
+}

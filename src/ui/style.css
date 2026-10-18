@@ -50,3 +50,29 @@ table { width:100%; border-collapse:collapse; margin:6px 0; } td,th { padding:3p
 .badge { display:inline-block; padding:0 6px; border-radius:8px; font-size:10px; border:1px solid currentColor; }
 input[type=text] { background:#06162a; color:var(--text); border:1px solid rgba(79,195,255,.55); border-radius:4px; padding:3px 6px; }
 body.in-battle #toasts { right:10px; top:120px; }
+
+/* ---------- Touch / Mobile ---------- */
+html, body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+#left, #right, #modal-body { touch-action: pan-y; }
+#c { touch-action: none; }
+.mobile-only, #help-touch { display: none; }
+body.touch #help { display: none; }
+body.touch #help-touch { display: block; position: fixed; bottom: 0; left: 0; right: 0; padding: 4px 12px; font-size: 10px; color: var(--dim); background: rgba(2,6,13,.7); text-align: center; z-index: 3; }
+body.touch .mobile-only { display: inline-block; }
+body.hide-left #left, body.hide-right #right { display: none; }
+body.touch button { min-height: 32px; }
+#topbar { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+#left { left: max(10px, env(safe-area-inset-left)); } #right { right: max(10px, env(safe-area-inset-right)); }
+@media (max-width: 1000px), (max-height: 520px) {
+  html, body { font-size: 11px; }
+  #topbar { height: 40px; gap: 8px; }
+  .logo { display: none; }
+  #resources { gap: 8px; } .res { min-width: 0; } .res b { font-size: 12px; } .res i { font-size: 9px; }
+  #views { display: flex; gap: 3px; flex-wrap: nowrap; } #views button { padding: 3px 6px; font-size: 10px; }
+  #left, #right { top: 46px; width: 250px; max-height: calc(100% - 70px); padding: 8px; }
+  #toasts { right: 10px; top: 46px; width: 240px; } .toast { padding: 5px 8px; font-size: 10px; }
+  #battle-bars { width: min(560px, 92vw); top: 4px; gap: 8px; } #battle-bars .side { padding: 4px 8px; }
+  #battle-controls { width: min(720px, 96vw); bottom: 20px; padding: 6px 8px; } #battle-controls .row { margin: 2px 0; gap: 5px; flex-wrap: wrap; }
+  #modal-body { min-width: 0; width: min(560px, 94vw); max-height: 88vh; overflow: auto; padding: 12px; }
+  h2 { font-size: 13px; }
+}
