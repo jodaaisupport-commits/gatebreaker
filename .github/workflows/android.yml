@@ -26,8 +26,7 @@ jobs:
           java-version: 21
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
-
+      # Android SDK ist auf ubuntu-latest vorinstalliert (ANDROID_HOME); fehlende Plattformen lädt Gradle selbst.
       - name: Web-Build
         run: |
           npm ci
