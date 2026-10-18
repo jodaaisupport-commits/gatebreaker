@@ -1,0 +1,6 @@
+services:
+  - type: web
+    runtime: static
+    name: gatebreaker
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
