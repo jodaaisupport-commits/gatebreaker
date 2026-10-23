@@ -9,7 +9,9 @@ try {
   const p = await b.newPage();
   await p.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true });
   p.on('console', m => { if (['error', 'warn'].includes(m.type())) errs.push(m.text()); }); p.on('pageerror', e => errs.push(e.message));
-  await p.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle0' }); await p.evaluate(() => localStorage.clear()); await p.reload({ waitUntil: 'networkidle0' }); await wait(1500);
+  await p.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle0' }); await p.evaluate(() => localStorage.clear()); await p.reload({ waitUntil: 'networkidle0' }); await wait(800);
+  await p.waitForSelector('[data-act="pickfaction"]');
+  await p.click('[data-act="pickfaction"][data-id="militar"]'); await wait(600);
   const cdp = await p.createCDPSession();
   const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map((q, i) => ({ x: q[0], y: q[1], id: i })) });
   const tap = async (x, y) => { await touch('touchStart', [[x, y]]); await wait(40); await touch('touchEnd', []); };
