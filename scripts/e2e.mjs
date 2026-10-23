@@ -14,13 +14,26 @@ try {
   page.on('pageerror', e => errors.push('[pageerror] ' + e.message));
   page.on('dialog', d => d.accept());
   await page.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle0' });
-  await page.evaluate(() => localStorage.clear()); await page.reload({ waitUntil: 'networkidle0' });
-  await wait(1500);
+  await page.evaluate(() => { localStorage.clear(); }); await page.reload({ waitUntil: 'networkidle0' });
+  await wait(800);
+  // Fraktionswahl (v0.2)
+  check(await page.$('[data-act="pickfaction"]'), 'Fraktionswahl sichtbar');
+  await page.click('[data-act="pickfaction"][data-id="bergbau"]'); await wait(600);
+  check(await page.evaluate(() => gb.state.faction === 'bergbau' && document.querySelector('#modal').classList.contains('hidden')), 'Bergbaukonzern gewählt, Modal zu');
   log('Ressourcen:', await page.$eval('#resources', e => e.innerText.replace(/\n/g, ' ')));
   check(await page.evaluate(() => !!document.querySelector('canvas') && gb.state.time > 0), 'Spiel läuft, Zeit tickt');
+  check(await page.evaluate(() => document.body.innerText.includes('Aufträge') || document.body.innerText.includes('Erste Mine')), 'Tutorial-Auftragsliste sichtbar');
   await page.screenshot({ path: 'screenshots/01-galaxie.png' });
 
-  // System betreten, Heimatplanet anklicken (echter Klick auf 3D-Planet ist schwer, daher UI-Zustand), Werft bauen
+  // Forschungspanel
+  await page.click('#btn-tech'); await wait(400);
+  check(await page.evaluate(() => gb.ui.panel === 'tech' && !!document.querySelector('[data-act="research"]')), 'Forschungspanel offen');
+  await page.evaluate(() => Object.assign(gb.state.res, { erz: 500, treibstoff: 200, credits: 500, energie: 100 }));
+  await page.evaluate(() => { gb.Sim.actions.research(gb.state, 'eco_minen'); gb.ui.panel = 'main'; });
+  await wait(300);
+  check(await page.evaluate(() => gb.state.tech.queue?.id === 'eco_minen'), 'Forschung gestartet');
+
+  // System betreten, Werft bauen
   await page.click('[data-act="enter"]'); await wait(600);
   check(await page.evaluate(() => gb.ui.view === 'system'), 'Systemansicht geöffnet');
   await page.evaluate(() => { gb.ui.selectedPlanet = 'helios-prime'; }); await wait(400);
@@ -28,14 +41,24 @@ try {
   check(await page.evaluate(() => gb.state.planets['helios-prime'].queue.length === 1), 'Werft in Bauliste');
   await page.evaluate(() => { for (let i = 0; i < 20; i++) gb.Sim.tick(gb.state, 1); }); await wait(400);
   check(await page.evaluate(() => gb.state.planets['helios-prime'].buildings.werft === 1), 'Werft fertig');
+  check(await page.evaluate(() => gb.state.tutorial.claimed.includes('werft')), 'Tutorial: Werft belohnt');
   await page.evaluate(() => Object.assign(gb.state.res, { erz: 5000, treibstoff: 3000, credits: 3000 })); await wait(400);
-  for (const t of ['fregatte', 'bomber', 'jaeger']) { await page.click(`[data-act="ship"][data-id="${t}"][data-n="5"]`); await wait(150); }
+  for (const t of ['fregatte', 'bomber', 'jaeger', 'kolonie']) { await page.click(`[data-act="ship"][data-id="${t}"][data-n="5"]`); await wait(150); }
   await page.evaluate(() => { gb.Sim.tick(gb.state, 3); });
   await wait(2500);
   await page.screenshot({ path: 'screenshots/02-system-planet.png' });
-  await page.evaluate(() => { for (let i = 0; i < 150; i++) gb.Sim.tick(gb.state, 1); });
+  await page.evaluate(() => { for (let i = 0; i < 200; i++) gb.Sim.tick(gb.state, 1); });
   const pf = await page.evaluate(() => gb.state.fleets.find(f => f.owner === 'player').ships);
-  log('Heimatflotte:', JSON.stringify(pf)); check(pf.fregatte >= 6 && pf.bomber >= 5, 'Schiffe gebaut');
+  log('Heimatflotte:', JSON.stringify(pf)); check(pf.fregatte >= 6 && pf.bomber >= 5 && (pf.kolonie || 0) >= 1, 'Schiffe inkl. Kolonie gebaut');
+
+  // Kolonisierung Cinder (helios-b)
+  await page.evaluate(() => {
+    gb.ui.selectedPlanet = 'helios-b';
+    gb.Sim.actions.survey(gb.state, 'helios-b');
+    gb.Sim.actions.colonize(gb.state, 'helios-b');
+  }); await wait(400);
+  check(await page.evaluate(() => gb.state.planets['helios-b'].owner === 'player' && gb.state.planets['helios-b'].buildings), 'Kolonie gegründet mit Gebäuden');
+  check(await page.evaluate(() => gb.state.tutorial.claimed.includes('kolonie')), 'Tutorial: Kolonie belohnt');
 
   // Flotte nach Vortex senden
   await page.keyboard.press('g'); await wait(300);
@@ -47,7 +70,10 @@ try {
   check(true, 'Echtzeitschlacht in ' + await page.evaluate(() => gb.state.battle.system));
   await page.click('[data-form="kugel"]'); await page.select('#prio', 'fregatte');
   check(await page.evaluate(() => gb.state.battle.settings.player.formation === 'kugel' && gb.state.battle.settings.player.priority === 'fregatte'), 'Formation/Priorität übernommen');
-  await wait(5000);
+  // Battle ×2
+  await page.click('#btn-speed'); await wait(200);
+  check(await page.evaluate(() => gb.state.battleSpeed === 2), 'Schlacht-Tempo ×2');
+  await wait(4000);
   await page.screenshot({ path: 'screenshots/03-schlacht.png' });
   await page.waitForFunction(() => !gb.state.battle, { timeout: 150000 });
   await wait(600);
@@ -56,7 +82,7 @@ try {
   check(await page.evaluate(() => !document.querySelector('#modal').classList.contains('hidden')), 'Gefechtsbericht angezeigt');
   await page.screenshot({ path: 'screenshots/04-bericht.png' });
 
-  // Erobern
+  // Erobern + Gebäude auf erobertem Planeten
   await page.click('[data-act="closemodal"]'); await page.keyboard.press('g'); await wait(200);
   await page.evaluate(() => { gb.ui.selectedSystem = 'vortex'; }); await page.keyboard.press('s'); await wait(400);
   await page.evaluate(() => { gb.ui.selectedPlanet = 'vortex-a'; }); await wait(400);
@@ -65,15 +91,20 @@ try {
   await page.click('[data-act="land"]'); await wait(800);
   const owner = await page.evaluate(() => gb.state.planets['vortex-a'].owner);
   check(owner === 'player', 'Relikt erobert (Besitzer: ' + owner + ')');
+  check(await page.evaluate(() => !!gb.state.planets['vortex-a'].buildings && gb.state.planets['vortex-a'].buildings.kraftwerk >= 1), 'Eroberter Planet hat Gebäudeverwaltung');
+  await page.evaluate(() => Object.assign(gb.state.res, { erz: 2000, credits: 2000, treibstoff: 500, energie: 100 })); await wait(300);
+  await page.click('[data-act="build"][data-id="mine"]'); await wait(200);
+  check(await page.evaluate(() => gb.state.planets['vortex-a'].queue.some(q => q.key === 'mine')), 'Mine auf erobertem Planeten in Bauliste');
   await page.screenshot({ path: 'screenshots/05-eroberung.png' });
 
-  // Offline-Fortschritt: Spielstand 1h in die Vergangenheit datieren, Speichern danach blockieren, neu laden
+  // Offline-Fortschritt
   const before = await page.evaluate(() => { gb.Sim.save(gb.state, localStorage, Date.now() - 3600e3); Storage.prototype.setItem = () => {}; return gb.state.res.erz; });
   await page.reload({ waitUntil: 'networkidle0' }); await wait(1200);
   log('Offline-Modal:', await page.$eval('#modal-body', e => e.innerText.replace(/\n/g, ' | ')));
   await page.screenshot({ path: 'screenshots/06-offline.png' });
   const after = await page.evaluate(() => gb.state.res.erz);
   check(after > before + 300, `Offline-Erträge (Erz ${Math.round(before)} → ${Math.round(after)})`);
+  check(await page.evaluate(() => gb.state.faction === 'bergbau'), 'Fraktion nach Reload persistiert');
 } catch (e) { ok = false; console.error(e); }
 finally {
   console.log('\nKonsolenfehler/-warnungen:', errors.length ? errors : 'keine');

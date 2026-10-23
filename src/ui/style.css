@@ -76,3 +76,6 @@ body.touch button { min-height: 32px; }
   #modal-body { min-width: 0; width: min(560px, 94vw); max-height: 88vh; overflow: auto; padding: 12px; }
   h2 { font-size: 13px; }
 }
+.item.done { opacity: 0.75; border-color: rgba(79,195,255,.35); }
+.item.locked { opacity: 0.45; }
+.badge.amber { color: var(--amber); border-color: var(--amber); }

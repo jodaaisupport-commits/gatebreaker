@@ -118,7 +118,7 @@ export function stepBattle(b, dt) {
           u.cd = def.rate * (0.9 + rnd(b) * 0.2);
           const tem = energyMult(b.settings[tgt.side].energy).a;
           const hit = rnd(b) < (1 - Math.min(0.8, EVADE[tgt.type] * tem)) * acc;
-          const dmg = def.dmg * (DMG_MULT[u.type][tgt.type] || 1) * em.w * fm.dmg;
+          const dmg = def.dmg * (u.dmgMult || 1) * (DMG_MULT[u.type]?.[tgt.type] || 1) * em.w * fm.dmg;
           const speedP = def.weapon === 'laser' ? 400 : def.weapon === 'torpedo' ? 45 : 140;
           b.shots.push({ from: { ...u.pos }, to: { ...tgt.pos }, target: tgt.id, t: 0, dur: Math.max(0.08, dist / speedP), dmg, hit, weapon: def.weapon, side });
         }

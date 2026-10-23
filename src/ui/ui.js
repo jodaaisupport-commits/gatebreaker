@@ -1,33 +1,38 @@
 // DOM-Oberfläche im Holo-Stil. Erzeugt HTML aus dem Zustand; Klicks laufen über data-act.
-import { BUILDINGS, BUILDING_ORDER, SHIPS, SHIP_ORDER, RES, RES_LABEL, buildingCost, buildingTime } from '../game/data.js';
-import { sysById, rates, canAfford, homePlanet, fleetsIn, playerVisible, shipCount, fleetPower, path, shipTime } from '../game/sim.js';
+import { BUILDINGS, BUILDING_ORDER, SHIPS, SHIP_ORDER, RES, RES_LABEL, buildingCost, buildingTime, FACTIONS, FACTION_ORDER, TUTORIAL, TECHS, TECH_BRANCHES, TECH_ORDER } from '../game/data.js';
+import { sysById, rates, canAfford, homePlanet, fleetsIn, playerVisible, shipCount, fleetPower, path, shipTime, canResearch, hasTech, techEffects, faction } from '../game/sim.js';
 import { PRIORITIES } from '../game/battleSim.js';
 
 const fmt = n => n >= 10000 ? (n / 1000).toFixed(1) + 'k' : Math.floor(n).toString();
 const costHtml = (state, c) => Object.entries(c).filter(([, v]) => v > 0).map(([r, v]) => `<span class="${state.res[r] < v ? 'no' : ''}">${fmt(v)} ${RES_LABEL[r]}</span>`).join(' · ');
-const shipsHtml = s => SHIP_ORDER.filter(t => s[t]).map(t => `${s[t]}× ${SHIPS[t].name}`).join(', ') || '<span class="muted">keine Schiffe</span>';
+const shipsHtml = s => SHIP_ORDER.filter(t => s?.[t]).map(t => `${s[t]}× ${SHIPS[t].name}`).join(', ') || '<span class="muted">keine Schiffe</span>';
 export const troopStrength = pf => pf.reduce((a, f) => a + 40 + 3 * (f.ships.jaeger || 0) + 4 * (f.ships.bomber || 0) + 10 * (f.ships.fregatte || 0) + 16 * (f.ships.zerstoerer || 0), 0);
+const tip = (title, body) => ` title="${title}${body ? '\n' + body : ''}"`;
 
 export function resourcesHtml(state) {
   const r = rates(state);
-  return RES.map(k => `<div class="res ${k === 'energie' && r.energie < 0 ? 'neg' : ''}"><b>${fmt(state.res[k])}</b><i>${RES_LABEL[k]} ${r[k] >= 0 ? '+' : ''}${r[k].toFixed(1)}/s</i></div>`).join('')
+  return RES.map(k => `<div class="res ${k === 'energie' && r.energie < 0 ? 'neg' : ''}"${tip(RES_LABEL[k], `${r[k] >= 0 ? '+' : ''}${r[k].toFixed(2)}/s`)}><b>${fmt(state.res[k])}</b><i>${RES_LABEL[k]} ${r[k] >= 0 ? '+' : ''}${r[k].toFixed(1)}/s</i></div>`).join('')
     + (r.eff < 1 ? `<div class="res neg"><b>⚠ ${Math.round(r.eff * 100)}%</b><i>Energiemangel</i></div>` : '');
 }
 
 export function leftHtml(state, ui) {
+  if (ui.panel === 'tech') return techHtml(state);
   if (ui.view === 'system' && ui.selectedPlanet) return planetHtml(state, ui, ui.selectedPlanet);
   const sysId = ui.view === 'system' ? ui.systemView : ui.selectedSystem;
-  if (!sysId) return `<h2>Galaxie</h2><p class="muted">Klicke ein Sternsystem an.</p>${goalsHtml(state)}`;
-  return systemHtml(state, ui, sysId) + (ui.view === 'galaxy' ? goalsHtml(state) : '<p class="muted">Klicke einen Planeten an, um ihn zu verwalten.</p>');
+  if (!sysId) return `<h2>Galaxie</h2><p class="muted">Klicke ein Sternsystem an.</p>${tutorialHtml(state)}`;
+  return systemHtml(state, ui, sysId) + (ui.view === 'galaxy' ? tutorialHtml(state) : '<p class="muted">Klicke einen Planeten an, um ihn zu verwalten.</p>');
 }
 
-function goalsHtml(state) {
-  const hp = homePlanet(state); const owned = Object.values(state.planets).filter(p => p.owner === 'player').length;
-  const goals = [
-    ['Raumwerft bauen', hp.buildings.werft > 0], ['Abwehrplattform bauen', hp.buildings.abwehr > 0],
-    ['Ein weiteres System erkunden', Object.keys(state.explored).length > 1], ['Einen feindlichen Planeten erobern', owned > 1], ['Draxis Prime erobern', state.ai.defeated],
-  ];
-  return `<h3>Ziele</h3>` + goals.map(([t, d]) => `<div class="${d ? 'blue' : 'muted'}">${d ? '✔' : '○'} ${t}</div>`).join('');
+function tutorialHtml(state) {
+  const done = new Set(state.tutorial?.claimed || []);
+  const fac = faction(state);
+  let h = `<h3>Aufträge <span class="muted">· ${fac.name}</span></h3>`;
+  for (const t of TUTORIAL) {
+    const ok = done.has(t.id);
+    const rw = Object.entries(t.reward).map(([k, v]) => `+${v} ${RES_LABEL[k] || k}`).join(', ');
+    h += `<div class="item ${ok ? 'done' : ''}"><div class="top"><span class="${ok ? 'blue' : ''}">${ok ? '✔' : '○'} ${t.title}</span><span class="cost">${ok ? 'erledigt' : rw}</span></div>${ok ? '' : `<div class="stats muted">${t.hint}</div>`}</div>`;
+  }
+  return h;
 }
 
 function systemHtml(state, ui, sysId) {
@@ -35,14 +40,19 @@ function systemHtml(state, ui, sysId) {
   let h = `<h2>${explored ? s.name : '? ' + s.name}</h2>`;
   if (!explored) h += `<p class="muted">Unerforschtes System. Schicke eine Flotte hin, um es aufzudecken.</p>`;
   else {
-    h += `<h3>Planeten</h3>` + s.planets.map(p => { const st = state.planets[p.id]; return `<div class="item"><div class="top"><span>${p.name} <span class="muted">· ${p.type}</span></span>${st.owner === 'player' ? '<span class="badge blue">Eigen</span>' : st.owner === 'ai' ? '<span class="badge red">Draxis</span>' : ''}</div></div>`; }).join('');
+    h += `<h3>Planeten</h3>` + s.planets.map(p => {
+      const st = state.planets[p.id];
+      const tag = st.owner === 'player' ? (st.colonized ? '<span class="badge blue">Kolonie</span>' : '<span class="badge blue">Eigen</span>') : st.owner === 'ai' ? '<span class="badge red">Draxis</span>' : st.surveyed ? '<span class="badge">erkundet</span>' : '';
+      return `<div class="item"><div class="top"><span>${p.name} <span class="muted">· ${p.type}</span></span>${tag}</div></div>`;
+    }).join('');
     const enemies = vis ? fleetsIn(state, sysId, 'ai') : [];
-    h += `<h3>Flotten</h3>` + ([...fleetsIn(state, sysId, 'player'), ...enemies].map(f => `<div class="item"><span class="${f.owner === 'ai' ? 'red' : 'blue'}">${f.name}</span><div class="stats">${shipsHtml(f.ships)}</div></div>`).join('') || `<div class="muted">${vis ? 'Keine' : 'Keine Sensordaten (keine eigene Präsenz)'}</div>`);
+    const spy = techEffects(state).spyVision && explored;
+    h += `<h3>Flotten</h3>` + ([...fleetsIn(state, sysId, 'player'), ...enemies].map(f => `<div class="item"><span class="${f.owner === 'ai' ? 'red' : 'blue'}">${f.name}</span><div class="stats">${shipsHtml(f.ships)}${spy && f.owner === 'ai' ? ` · Stärke ${fleetPower(f.ships)}` : ''}</div></div>`).join('') || `<div class="muted">${vis ? 'Keine' : 'Keine Sensordaten (keine eigene Präsenz)'}</div>`);
   }
   h += `<div class="btns">${explored && ui.view !== 'system' ? `<button data-act="enter" data-id="${sysId}">System ansehen</button>` : ''}`;
   const f = state.fleets.find(x => x.id === ui.selectedFleet);
   if (f) { const p = path(f.system, sysId); const fuel = p ? Math.ceil(shipCount(f) * 2 * p.length) : 0;
-    h += `<button data-act="move" data-id="${sysId}" ${!p || f.move || f.inBattle || !p.length ? 'disabled' : ''}>„${f.name}“ hierher senden${p && p.length ? ` (${fuel} Treibstoff)` : ''}</button>`; }
+    h += `<button data-act="move" data-id="${sysId}" ${!p || f.move || f.inBattle || !p.length ? 'disabled' : ''}${tip('Flotte senden', fuel ? `${fuel} Treibstoff · ${Math.round(p.length * 12)}s` : '')}>„${f.name}“ hierher senden${p && p.length ? ` (${fuel} Treibstoff)` : ''}</button>`; }
   h += `</div>`;
   return h;
 }
@@ -52,35 +62,69 @@ function planetHtml(state, ui, pid) {
   let h = `<h2>${def.name}</h2><div class="muted">${def.type} · ${sysById(st.system).name}</div>`;
   if (st.owner === 'player' && st.buildings) {
     const r = rates(state);
-    h += `<div class="stats">Energie: ${r.eProd.toFixed(1)} erzeugt / ${r.eCons.toFixed(1)} verbraucht · Flottenunterhalt ${r.upkeep.toFixed(2)} Cr/s</div><h3>Gebäude</h3>`;
+    h += `<div class="stats">Imperium: Energie ${r.eProd.toFixed(1)}/${r.eCons.toFixed(1)} · Unterhalt ${r.upkeep.toFixed(2)} Cr/s${st.colonized ? ' · Kolonie' : st.home ? ' · Heimatwelt' : ' · erobert'}</div><h3>Gebäude</h3>`;
     for (const k of BUILDING_ORDER) {
-      const lvl = st.buildings[k] || 0; const qn = st.queue.filter(q => q.key === k).length; const c = buildingCost(k, lvl + qn);
-      h += `<div class="item"><div class="top"><span>${BUILDINGS[k].name} <b>Stufe ${lvl}</b>${qn ? ` <span class="amber">→ ${lvl + qn}</span>` : ''}</span><button data-act="build" data-id="${k}" ${!canAfford(state, c) || st.queue.length >= 3 ? 'disabled' : ''}>Ausbau</button></div><div class="stats">${BUILDINGS[k].desc}</div><div class="cost">${costHtml(state, c)} · ${buildingTime(k, lvl + qn)}s</div></div>`;
+      const lvl = st.buildings[k] || 0; const qn = st.queue.filter(q => q.key === k).length; const c = buildingCost(k, lvl + qn); const t = buildingTime(k, lvl + qn);
+      h += `<div class="item"><div class="top"><span>${BUILDINGS[k].name} <b>Stufe ${lvl}</b>${qn ? ` <span class="amber">→ ${lvl + qn}</span>` : ''}</span><button data-act="build" data-id="${k}" ${!canAfford(state, c) || st.queue.length >= 3 ? 'disabled' : ''}${tip('Ausbau', `${costHtml(state, c).replace(/<[^>]+>/g, '')} · ${t}s`)}>Ausbau</button></div><div class="stats">${BUILDINGS[k].desc}</div><div class="cost">${costHtml(state, c)} · ${t}s</div></div>`;
     }
     if (st.queue.length) h += `<h3>Bauliste</h3>` + st.queue.map((q, i) => `<div class="item">${BUILDINGS[q.key].name} → Stufe ${q.level} <span class="muted">${i === 0 ? Math.ceil(q.remaining) + 's' : 'wartet'}</span>${i === 0 ? `<div class="bar"><div style="width:${100 - q.remaining / q.total * 100}%"></div></div>` : ''}</div>`).join('');
     h += `<h3>Raumwerft</h3>`;
     if (!st.buildings.werft) h += `<div class="amber">Baue zuerst eine Raumwerft.</div>`;
     else {
-      for (const t of SHIP_ORDER) { const d = SHIPS[t]; const c5 = Object.fromEntries(Object.entries(d.cost).map(([r, v]) => [r, v * 5]));
-        h += `<div class="item"><div class="top"><span>${d.name}</span><span class="btns" style="margin:0"><button data-act="ship" data-id="${t}" data-n="1" ${!canAfford(state, d.cost) || st.shipQueue.length >= 5 ? 'disabled' : ''}>+1</button><button data-act="ship" data-id="${t}" data-n="5" ${!canAfford(state, c5) || st.shipQueue.length >= 5 ? 'disabled' : ''}>+5</button></span></div>
-          <div class="stats">Hülle ${d.hull} · Schild ${d.shield} · Schaden ${d.dmg}/${d.rate}s · ${shipTip(t)}</div><div class="cost">${costHtml(state, d.cost)} · ${Math.round(shipTime(state, t))}s</div></div>`; }
+      for (const t of SHIP_ORDER) { const d = SHIPS[t]; const c5 = Object.fromEntries(Object.entries(d.cost).map(([r, v]) => [r, v * 5])); const stime = Math.round(shipTime(state, t, st));
+        h += `<div class="item"><div class="top"><span>${d.name}${d.civilian ? ' <span class="badge">zivil</span>' : ''}</span><span class="btns" style="margin:0"><button data-act="ship" data-id="${t}" data-n="1" ${!canAfford(state, d.cost) || st.shipQueue.length >= 5 ? 'disabled' : ''}${tip(d.name, `${costHtml(state, d.cost).replace(/<[^>]+>/g, '')} · ${stime}s`)}>+1</button><button data-act="ship" data-id="${t}" data-n="5" ${!canAfford(state, c5) || st.shipQueue.length >= 5 ? 'disabled' : ''}>+5</button></span></div>
+          <div class="stats">Hülle ${d.hull} · Schild ${d.shield} · Schaden ${d.dmg}/${d.rate}s · ${shipTip(t)}</div><div class="cost">${costHtml(state, d.cost)} · ${stime}s</div></div>`; }
       if (st.shipQueue.length) h += st.shipQueue.map((q, i) => `<div class="item">${q.count}× ${SHIPS[q.type].name} <span class="muted">${i === 0 ? Math.ceil(q.remaining) + 's/Stück' : 'wartet'}</span>${i === 0 ? `<div class="bar"><div style="width:${100 - q.remaining / q.total * 100}%"></div></div>` : ''}</div>`).join('');
     }
   } else if (st.owner === 'player') {
-    h += `<p>Eroberte Kolonie. Liefert +1 Erz/s, +0,4 Treibstoff/s, +0,8 Credits/s, +0,5 Energie.</p><div class="stats">Garnison: ${st.garrison}</div>`;
+    h += `<p>Eigene Kolonie ohne Gebäudeverwaltung (Legacy). Liefert Basisertrag.</p><div class="stats">Garnison: ${st.garrison}</div>`;
   } else if (st.owner === 'ai') {
     const pf = fleetsIn(state, st.system, 'player'); const af = fleetsIn(state, st.system, 'ai');
     const control = pf.length && !af.length && st.defense === 0;
     h += `<h3>Feindlicher Planet</h3><div>Garnison: <b class="red">${st.garrison}</b> · Abwehrplattformen: <b>${st.defense}</b></div>`;
     h += `<div class="stats">${!pf.length ? 'Schicke eine Flotte in den Orbit.' : af.length || st.defense ? '<span class="amber">Orbit umkämpft – besiege Flotte und Abwehr.</span>' : '<span class="blue">Orbit unter deiner Kontrolle.</span>'}</div>`;
     if (st.bombard) h += `<div class="item">Bombardement läuft… ${Math.ceil(st.bombard.remaining)}s<div class="bar amber"><div style="width:${100 - st.bombard.remaining / st.bombard.total * 100}%"></div></div></div>`;
-    h += `<div class="btns"><button class="warn" data-act="bombard" data-id="${pid}" ${!control || st.bombard ? 'disabled' : ''}>Bombardieren (60 Treibstoff)</button><button class="alert" data-act="land" data-id="${pid}" ${!control ? 'disabled' : ''}>Truppen landen (150 Cr, 50 Tr)</button></div>`;
-    if (pf.length) h += `<div class="stats">Landungstruppen: ca. ${troopStrength(pf)} · Erfolg wahrscheinlich, wenn deutlich über der Garnison. Bombardieren senkt die Garnison.</div>`;
-  } else h += `<p class="muted">Unbesiedelt. (Kolonisierung folgt in einer späteren Version.)</p>`;
+    h += `<div class="btns"><button class="warn" data-act="bombard" data-id="${pid}" ${!control || st.bombard ? 'disabled' : ''}${tip('Bombardieren', '60 Treibstoff · senkt Garnison')}>Bombardieren (60 Treibstoff)</button><button class="alert" data-act="land" data-id="${pid}" ${!control ? 'disabled' : ''}${tip('Truppen landen', '150 Credits · 50 Treibstoff')}>Truppen landen (150 Cr, 50 Tr)</button></div>`;
+    if (pf.length) h += `<div class="stats">Landungstruppen: ca. ${troopStrength(pf)} · Erfolg wahrscheinlich, wenn deutlich über der Garnison.</div>`;
+  } else {
+    // Unbesiedelt → Erkunden / Kolonisieren
+    const pf = fleetsIn(state, st.system, 'player');
+    const hasColony = pf.some(f => (f.ships.kolonie || 0) > 0);
+    h += `<h3>Unbesiedelt</h3>`;
+    if (!st.surveyed) h += `<p class="muted">Noch nicht erkundet. Eine Flotte im Orbit kann den Planeten vermessen.</p>`;
+    else h += `<p class="blue">Erkundet – bereit zur Kolonisierung mit einem Kolonieschiff.</p>`;
+    h += `<div class="btns">
+      <button data-act="survey" data-id="${pid}" ${!pf.length || st.surveyed ? 'disabled' : ''}${tip('Erkunden', '15 Treibstoff')}>Erkunden (15 Treibstoff)</button>
+      <button data-act="colonize" data-id="${pid}" ${!pf.length || !st.surveyed || !hasColony ? 'disabled' : ''}${tip('Kolonisieren', 'Verbraucht 1 Kolonieschiff')}>Kolonisieren</button>
+    </div>`;
+    if (pf.length && !hasColony) h += `<div class="amber">Kein Kolonieschiff in der Flotte. Baue eines in einer Raumwerft.</div>`;
+  }
   h += `<div class="btns"><button data-act="deselect">Zurück zum System</button></div>`;
   return h;
 }
-function shipTip(t) { return { jaeger: 'stark gg. Bomber', bomber: 'stark gg. Großkampfschiffe', fregatte: 'Flak: stark gg. Jäger', zerstoerer: 'stark gg. Fregatten' }[t]; }
+function shipTip(t) { return { jaeger: 'stark gg. Bomber', bomber: 'stark gg. Großkampfschiffe', fregatte: 'Flak: stark gg. Jäger', zerstoerer: 'stark gg. Fregatten', kolonie: 'zivil – gründet Kolonien' }[t] || ''; }
+
+export function techHtml(state) {
+  const q = state.tech?.queue;
+  let h = `<h2>Forschung</h2><div class="muted">Fraktion: ${faction(state).name} · Forschungsgeschwindigkeit ×${techEffects(state).researchMult.toFixed(2)}</div>`;
+  if (q) {
+    const t = TECHS[q.id];
+    h += `<div class="item"><b>Läuft: ${t?.name || q.id}</b><div class="bar"><div style="width:${100 - q.remaining / q.total * 100}%"></div></div><div class="stats">${Math.ceil(q.remaining / techEffects(state).researchMult)}s verbleibend</div></div>`;
+  }
+  for (const br of TECH_BRANCHES) {
+    h += `<h3>${br.name}</h3>`;
+    for (const id of TECH_ORDER.filter(k => TECHS[k].branch === br.id)) {
+      const t = TECHS[id]; const done = hasTech(state, id); const err = done ? null : canResearch(state, id);
+      const blockedExclusive = t.exclusive && state.tech.exclusive[t.exclusive] && state.tech.exclusive[t.exclusive] !== id;
+      h += `<div class="item ${done ? 'done' : blockedExclusive ? 'locked' : ''}"><div class="top"><span>${done ? '✔ ' : ''}${t.name}${t.exclusive ? ' <span class="badge amber">exklusiv</span>' : ''}</span>
+        ${done ? '<span class="blue">fertig</span>' : `<button data-act="research" data-id="${id}" ${err ? 'disabled' : ''}${tip(t.name, t.desc)}>Forschen</button>`}</div>
+        <div class="stats">${t.desc}</div>
+        ${done ? '' : `<div class="cost">${costHtml(state, t.cost)} · ${t.time}s${err && err !== 'Nicht genug Ressourcen.' ? ` · <span class="amber">${err}</span>` : ''}</div>`}</div>`;
+    }
+  }
+  h += `<div class="btns"><button data-act="panel" data-id="main">Zurück</button></div>`;
+  return h;
+}
 
 export function rightHtml(state, ui) {
   let h = `<h2>Flotten</h2>`;
@@ -115,7 +159,7 @@ export function reportHtml(r) {
     <div class="${r.winner === 'player' ? 'blue' : 'red'}" style="font-size:16px;margin:4px 0">${r.winner === 'player' ? 'SIEG' : r.retreat ? 'RÜCKZUG' : 'NIEDERLAGE'}</div>
     <div class="muted">${r.auto ? 'Automatisch ausgetragen · ' : ''}Dauer ${r.duration}s</div>
     <table><tr><th>Typ</th><th>Eigene</th><th>Verloren</th><th>Feind</th><th>Zerstört</th></tr>
-    ${types.map(t => `<tr><td>${SHIPS[t].name}</td><td>${r.start.player[t] || 0}</td><td class="red">${r.lost.player[t] || 0}</td><td>${r.start.ai[t] || 0}</td><td class="blue">${r.lost.ai[t] || 0}</td></tr>`).join('')}</table>
+    ${types.map(t => `<tr><td>${SHIPS[t]?.name || t}</td><td>${r.start.player[t] || 0}</td><td class="red">${r.lost.player[t] || 0}</td><td>${r.start.ai[t] || 0}</td><td class="blue">${r.lost.ai[t] || 0}</td></tr>`).join('')}</table>
     <h3>Geborgene Wracks</h3><div>${r.winner === 'player' ? `${r.salvage.erz} Erz · ${r.salvage.treibstoff} Treibstoff · ${r.salvage.credits} Credits` : '<span class="muted">Keine Bergung – das Schlachtfeld gehört dem Gegner.</span>'}</div>
     <div class="btns" style="margin-top:12px"><button data-act="closemodal">Schließen</button></div>`;
 }
@@ -127,4 +171,12 @@ export function offlineHtml(o) {
     ${o.events.length ? `<h3>Ereignisse</h3>${o.events.map(e => `<div class="${e.level === 'alert' ? 'red' : 'muted'}">${e.text}</div>`).join('')}` : ''}
     <div class="btns" style="margin-top:12px"><button data-act="closemodal">Weiter</button></div>`;
 }
+
+export function factionPickerHtml() {
+  return `<h2>Fraktion wählen</h2><p class="muted">Gatebreaker v0.2 – wähle dein Startimperium. Die Wahl wird gespeichert.</p>
+    ${FACTION_ORDER.map(id => { const f = FACTIONS[id]; return `<div class="item"><div class="top"><b>${f.name}</b><button data-act="pickfaction" data-id="${id}">Wählen</button></div>
+      <div class="stats">${f.desc}</div><div class="blue">＋ ${f.bonus}</div><div class="amber">− ${f.malus}</div></div>`; }).join('')}
+    <p class="muted" style="margin-top:8px">Eigene Fraktion aus Punkten folgt später.</p>`;
+}
+
 export { PRIORITIES };
