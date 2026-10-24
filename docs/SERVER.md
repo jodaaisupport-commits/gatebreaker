@@ -1,6 +1,6 @@
 # Gatebreaker – Server-Grenze (Entwurf v0.5)
 
-Stand heute: **reines Client-Spiel** (statische Seite auf Render, Spielstand in `localStorage`). Der Server unter `server/` ist ein **optionales Skelett** und ist **nicht deployt**.
+Stand v0.6: **reines Client-Spiel** (statische Seite auf Render, Spielstand in `localStorage`). Server unter `server/` (Login per Einladungscode, Cloud-Saves) ist fertig und lokal getestet, aber **nicht deployt**; siehe [BETA.md](BETA.md) für Kosten/Livegang.
 
 ## Grenze Client ↔ Server
 | Bereich | Heute (Client) | Mit Server |

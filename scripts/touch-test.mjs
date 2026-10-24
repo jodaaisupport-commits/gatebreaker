@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 // Touch-Test im Handy-Querformat (Emulation): Tippen, Doppeltippen, Ein-Finger-Drehen, Pinch-Zoom.
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
@@ -9,7 +10,7 @@ try {
   const p = await b.newPage();
   await p.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true });
   p.on('console', m => { if (['error', 'warn'].includes(m.type())) errs.push(m.text()); }); p.on('pageerror', e => errs.push(e.message));
-  await p.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle0' }); await p.evaluate(() => localStorage.clear()); await p.reload({ waitUntil: 'networkidle0' }); await wait(800);
+  await p.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle0' }); await p.evaluate(x => { localStorage.clear(); localStorage.setItem('gatebreaker-consent', JSON.stringify({ terms: 1, analytics: false })); localStorage.setItem('gatebreaker-invite', x); }, JSON.parse(readFileSync(new URL('../src/app/inviteHashes.json', import.meta.url))).hashes[0]); await p.reload({ waitUntil: 'networkidle0' }); await wait(800);
   await p.waitForSelector('[data-act="pickfaction"]');
   await p.click('[data-act="pickfaction"][data-id="militar"]'); await wait(600);
   const cdp = await p.createCDPSession();

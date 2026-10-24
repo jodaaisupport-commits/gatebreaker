@@ -1,0 +1,11 @@
+{
+  "inviteGate": true,
+  "feedback": true,
+  "updateCheck": true,
+  "debugPanel": true,
+  "autoQuality": true,
+  "cloudSaves": false,
+  "cloudUrl": "",
+  "pirates": true,
+  "minimap": true
+}

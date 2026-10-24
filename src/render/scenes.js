@@ -82,6 +82,8 @@ export class Renderer {
   }
   disposeView(v) { if (!v) return; v.ctl.dispose(); v.scene.traverse(o => { if (o.isCSS2DObject) o.element.remove(); }); }
 
+  // Qualitätsstufen: hoch / mittel / niedrig (Pixeldichte, Partikel)
+  setQuality(level) { this.quality = level; const dpr = devicePixelRatio || 1; this.r.setPixelRatio(level === 'hoch' ? Math.min(2, dpr) : level === 'mittel' ? Math.min(1.25, dpr) : Math.min(0.75, dpr)); FX.lowQuality = level === 'niedrig'; this.resize(); }
   focusSystem(id) { const v = this.views.galaxy; const p = new THREE.Vector3(...sysById(id).pos); const d = v.cam.position.clone().sub(v.ctl.target); v.ctl.target.copy(p); v.cam.position.copy(p).add(d); }
   // ---------- Galaxie ----------
   makeGalaxy() {
@@ -263,7 +265,7 @@ export class Renderer {
   }
   boom(v, pos, side, size) {
     const s = glow(side === 'player' ? 0x99ddff : 0xffaa55, 1); s.position.copy(pos); s.material.opacity = 1; v.scene.add(s); v.booms.push({ s, life: 1, size: 4 * size });
-    if (FX.particles) {
+    if (FX.particles && !FX.lowQuality) {
       const n = Math.round(14 + size * 8); const g = new THREE.BufferGeometry(); const pa = new Float32Array(n * 3); const vel = [];
       for (let i = 0; i < n; i++) { pa.set([pos.x, pos.y, pos.z], i * 3); vel.push(new THREE.Vector3().randomDirection().multiplyScalar((6 + Math.random() * 14) * (0.6 + size * 0.25))); }
       g.setAttribute('position', new THREE.BufferAttribute(pa, 3));

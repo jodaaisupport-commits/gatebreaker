@@ -4,3 +4,13 @@ services:
     name: gatebreaker
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
+    headers:
+      - path: /version.json
+        name: Access-Control-Allow-Origin
+        value: "*"
+      - path: /version.json
+        name: Cache-Control
+        value: no-store
+      - path: /flags.json
+        name: Cache-Control
+        value: no-store

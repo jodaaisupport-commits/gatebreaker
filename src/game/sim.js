@@ -1,4 +1,5 @@
 // Spiellogik: Zustand, Tick, Aktionen. Kein DOM, kein Three.js – kann später 1:1 auf einen Node/WebSocket-Server wandern.
+import { SAVE_VERSION, BACKUP_KEY, BACKUP_EVERY, migrateSave, validateSave, sanitize } from './saveio.js';
 import { BUILDING_ORDER } from './data.js';
 import { SYSTEMS, GATES, BUILDINGS, SHIPS, SHIP_ORDER, buildingCost, buildingTime, TRAVEL_TIME, GATE_COOLDOWN, OFFLINE_CAP, RES, FACTIONS, TUTORIAL, TECHS, TECH_ORDER } from './data.js';
 import { initEmpire, empireRates, applyRates, empireTick, plunderShare, empireActions, breakTreaty, initPlanet, homeHeld } from './empire.js';
@@ -20,7 +21,7 @@ export function newGame(now = Date.now(), factionId = 'bergbau') {
   for (const r in fac.startRes) res[r] += fac.startRes[r];
   const done = [...(fac.startTech || [])];
   const st = {
-    version: 3, time: 0, lastSave: now, nextId: 10, faction: factionId,
+    version: 4, time: 0, lastSave: now, nextId: 10, faction: factionId,
     res,
     planets,
     fleets: [
@@ -184,6 +185,7 @@ export function tick(state, dt, opts = {}) {
   aiTick(state, dt);
   warfareTick(state, dt, opts);
   checkEncounters(state, opts);
+  endState(state, dt);
 
   if (state.battle) {
     const spd = state.battleSpeed || 1;
@@ -219,13 +221,17 @@ function mergeAI(state) {
   const seen = {};
   for (const f of state.fleets) {
     if (f.owner !== 'ai' || f.move || f.inBattle || shipCount(f) === 0) continue;
-    const k = f.system;
+    const k = f.system + ':' + (f.faction || 'draxis');
     if (seen[k]) { const g = seen[k]; for (const t in f.ships) g.ships[t] = (g.ships[t] || 0) + f.ships[t]; f.ships = {}; if (f.role === 'home' || g.role !== 'home' && f.system === 'draxis') g.role = 'home'; }
     else seen[k] = f;
   }
   state.fleets = state.fleets.filter(f => shipCount(f) > 0 || (f.owner === 'player' && f.name === 'Heimatflotte' && !f.move));
 }
 
+export function aiCount(state, t) { return state.fleets.reduce((a, f) => a + (f.owner === 'ai' && f.faction !== 'pirat' ? f.ships[t] || 0 : 0), 0) + (state.ai.building?.[t] || 0); }
+export function aiHasFlagship(state) { return state.fleets.some(f => f.owner === 'ai' && f.ships.flaggschiff > 0); }
+// Waffenruhe gilt nur zwischen Spieler und Draxis; Freibeuter bleiben feindlich.
+export function hostileAI(state, f) { return f.owner === 'ai' && !((f.faction || 'draxis') === 'draxis' && peace(state)); }
 function aiTick(state, dt) {
   const ai = state.ai; if (ai.defeated) return;
   const home = state.planets['draxis-prime'];
@@ -241,8 +247,11 @@ function aiTick(state, dt) {
       const capPower = 350 + state.time * 0.25;
       let guard = 0;
       while (guard++ < 20 && fleetPower(hf.ships) < capPower) {
-        const roll = Math.random(); const t = roll < 0.35 ? 'jaeger' : roll < 0.6 ? 'bomber' : roll < 0.88 ? 'fregatte' : 'zerstoerer';
+        const roll = Math.random(); let t = roll < 0.35 ? 'jaeger' : roll < 0.6 ? 'bomber' : roll < 0.88 ? 'fregatte' : 'zerstoerer';
+        if (state.time > 900 && (roll > 0.8 && roll < 0.88 || aiCount(state, 'traeger') < Math.min(3, Math.floor(state.time / 900)))) t = 'traeger';
+        if (state.time > 1800 && !aiHasFlagship(state) && ai.budget > 1500) t = 'flaggschiff';
         const c = SHIPS[t].cost.erz + SHIPS[t].cost.credits; if (ai.budget < c) break;
+        if (t === 'flaggschiff') emit(state, 'alert', 'Geheimdienst: Draxis hat ein Flaggschiff in Dienst gestellt!');
         ai.budget -= c; hf.ships[t] = (hf.ships[t] || 0) + 1;
       }
     }
@@ -273,6 +282,35 @@ function aiTick(state, dt) {
   for (const f of state.fleets) if (f.owner === 'ai' && f.role === 'return' && !f.move && f.system === 'draxis') f.role = 'home';
 }
 
+// Sieg/Niederlage und Schutz vor Sackgassen
+function endState(state, dt) {
+  const f = state.flags || (state.flags = {});
+  if (state.ai.defeated && !f.victory) { f.victory = state.time; emit(state, 'info', 'SIEG', { endscreen: 'victory' }); }
+  const myPlanets = Object.values(state.planets).filter(p => p.owner === 'player');
+  const myShips = state.fleets.filter(x => x.owner === 'player').reduce((a, x) => a + shipCount(x) - (x.ships.kolonie || 0), 0);
+  if (!myPlanets.length && !state.battle) {
+    if (!f.defeat) { f.defeat = state.time; emit(state, 'alert', 'NIEDERLAGE', { endscreen: 'defeat' }); }
+    return;
+  }
+  f.defeat = 0;
+  // Sackgasse: keine Kampfschiffe, nichts in Bau, kaum Ressourcen -> Notfallhilfe
+  const building = myPlanets.some(p => p.queue?.length || p.shipQueue?.length);
+  const broke = state.res.erz < 60 && state.res.credits < 40;
+  if (!myShips && !building && broke) { f.stuck = (f.stuck || 0) + dt; } else f.stuck = 0;
+  if (f.stuck > 90 && state.time - (f.lastAid || -1e9) > 600) {
+    f.stuck = 0; f.lastAid = state.time; state.res.erz += 400; state.res.credits += 200; state.res.treibstoff += 150;
+    emit(state, 'warn', 'Notfallhilfe der Händlergilde: +400 Erz, +200 Credits, +150 Treibstoff. Baue Minen und eine Werft!');
+  }
+}
+export function exileRestart(state) {
+  // Niederlage ohne Neustart: neutrale Welt besiedeln
+  const p = Object.values(state.planets).find(x => !x.owner && !x.ruins && x.id !== 'draxis-prime') || Object.values(state.planets).find(x => x.owner !== 'player');
+  p.owner = 'player'; p.buildings = emptyBuildings(); p.buildings.kraftwerk = 1; p.buildings.mine = 1; p.queue = []; p.shipQueue = []; p.home = true; p.garrison = 20;
+  state.homeLost = false; state.explored[p.system] = true;
+  state.fleets.push({ id: state.nextId++, owner: 'player', name: 'Exilflotte', ships: { jaeger: 6, fregatte: 2 }, system: p.system, move: null, cooldown: 0 });
+  Object.assign(state.res, { erz: Math.max(state.res.erz, 600), credits: Math.max(state.res.credits, 300), treibstoff: Math.max(state.res.treibstoff, 200) });
+  state.flags.defeat = 0; emit(state, 'info', `Exil-Neustart auf ${planetName(p.id)}.`); return p.id;
+}
 function playerDefenseIn(state, sysId) {
   return Object.values(state.planets).filter(p => p.system === sysId && p.owner === 'player' && p.buildings).reduce((a, p) => a + (p.buildings.abwehr || 0), 0);
 }
@@ -280,10 +318,9 @@ function playerDefenseIn(state, sysId) {
 function checkEncounters(state, opts) {
   for (const sys of SYSTEMS) {
     if (state.battle && state.battle.system === sys.id) continue;
-    if (peace(state)) continue;
     const pf = fleetsIn(state, sys.id, 'player').filter(f => !f.inBattle);
-    const af = fleetsIn(state, sys.id, 'ai').filter(f => !f.inBattle);
-    const aiPlanetsDef = Object.values(state.planets).filter(p => p.system === sys.id && p.owner === 'ai').reduce((a, p) => a + p.defense, 0);
+    const af = fleetsIn(state, sys.id, 'ai').filter(f => !f.inBattle && hostileAI(state, f));
+    const aiPlanetsDef = peace(state) ? 0 : Object.values(state.planets).filter(p => p.system === sys.id && p.owner === 'ai').reduce((a, p) => a + p.defense, 0);
     const playerDef = playerDefenseIn(state, sys.id);
     const hp = homePlanet(state);
     const fight = (pf.length && (af.length || aiPlanetsDef > 0)) || (af.length && hp && hp.system === sys.id && (playerDef > 0 || pf.length));
@@ -298,7 +335,7 @@ function checkEncounters(state, opts) {
     const sides = { player: { ships: mergeAll(pf), platforms: playerDef }, ai: { ships: mergeAll(af), platforms: aiPlanetsDef } };
     const fx = techEffects(state);
     const vetMult = 1 + 0.05 * (pf.length ? Math.max(...pf.map(f => f.vet || 0)) : 0);
-    if (attacker === 'player' && af.length) breakTreaty(state, 'Du hast eine Draxis-Flotte angegriffen');
+    if (attacker === 'player' && af.some(f => (f.faction || 'draxis') === 'draxis')) breakTreaty(state, 'Du hast eine Draxis-Flotte angegriffen');
     const b = createBattle({ system: sys.id, sides, attacker, settings: { player: JSON.parse(JSON.stringify(state.battleSettings)) }, seed: (Math.random() * 1e9) | 0 });
     // Fraktions-/Tech-Boni auf Spielereinheiten anwenden
     for (const u of b.units) if (u.side === 'player') {
@@ -501,7 +538,7 @@ export const actions = {
 };
 
 function migrate(state) {
-  if (!state.version || state.version < 2) state.version = 2;
+  if (!state.version || state.version < SAVE_VERSION) migrateSave(state);
   if (!state.faction) state.faction = 'bergbau';
   if (!state.tech) state.tech = { done: [], exclusive: {}, queue: null };
   if (!state.tutorial) state.tutorial = { done: [], claimed: [] };
@@ -518,14 +555,28 @@ function migrate(state) {
 }
 
 export function save(state, storage, now = Date.now()) {
-  state.lastSave = now; const { events, ...rest } = state; storage.setItem(SAVE_KEY, JSON.stringify(rest));
-  // Alte Speicherstände nicht löschen, aber neue nutzen v2
+  state.lastSave = now; state.version = SAVE_VERSION; const { events, ...rest } = state;
+  if (validateSave(rest).length) return false; // nie einen kaputten Stand über einen guten schreiben
+  const prev = storage.getItem(SAVE_KEY);
+  if (prev && now - (+storage.getItem(BACKUP_KEY + '-at') || 0) > BACKUP_EVERY * 1000) { storage.setItem(BACKUP_KEY, prev); storage.setItem(BACKUP_KEY + '-at', String(now)); }
+  storage.setItem(SAVE_KEY, JSON.stringify(rest)); return true;
+}
+function parseSave(raw) {
+  if (!raw) return null; let st; try { st = JSON.parse(raw); } catch { return null; }
+  try { migrateSave(st); } catch { return null; }
+  return validateSave(st).length ? null : st;
 }
 export function load(storage, now = Date.now()) {
   let raw = storage.getItem(SAVE_KEY);
   if (!raw) raw = storage.getItem('gatebreaker-save-v1'); // Migration
-  if (!raw) return { state: null, offline: null, needsFaction: true };
-  let state; try { state = JSON.parse(raw); } catch { return { state: null, offline: null, needsFaction: true }; }
+  let state = parseSave(raw), restored = false;
+  if (!state && storage.getItem(BACKUP_KEY)) { state = parseSave(storage.getItem(BACKUP_KEY)); restored = !!state; }
+  if (!state) return { state: null, offline: null, needsFaction: true, corrupt: !!raw };
+  try { return { ...loadInner(state, now), restored }; }
+  catch (e) { if (!restored && storage.getItem(BACKUP_KEY)) { const b = parseSave(storage.getItem(BACKUP_KEY)); if (b) return { ...loadInner(b, now), restored: true }; } throw e; }
+}
+function loadInner(state, now) {
+  sanitize(state);
   state.events = []; migrate(state);
   if (state.battle) { autoResolve(state.battle); finishBattle(state, state.battle, true); }
   for (const b of state.battleQueue.splice(0)) { autoResolve(b); finishBattle(state, b, true); }

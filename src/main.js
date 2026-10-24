@@ -1,5 +1,16 @@
 import { loadSettings, saveSettings, settingsHtml, clampScale } from './ui/settings.js';
 import * as Audio from './audio/audio.js';
+import { VERSION } from './app/version.js';
+import { installErrorHandlers, logError, getErrors, clearErrors } from './app/errors.js';
+import { flags, loadFlags, setLocalFlag } from './app/flags.js';
+import { getConsent, setConsent, track, getAnalytics } from './app/consent.js';
+import { checkInvite, unlocked, unlock } from './app/invite.js';
+import { buildReport, download, mailtoUrl, issueUrl } from './app/feedback.js';
+import { PerfMonitor } from './app/perf.js';
+import { startUpdateCheck } from './app/update.js';
+import { NetClient } from './net/client.js';
+import { exportSave, parseImport, SAVE_VERSION, BACKUP_KEY } from './game/saveio.js';
+import { consentHtml, inviteHtml, endscreenHtml, feedbackHtml, changelogHtml, saveMenuHtml, debugHtml } from './ui/betaUi.js';
 import { setPalette, FX } from './render/scenes.js';
 import { SYSTEMS as ALL_SYSTEMS } from './game/data.js';
 import { Renderer } from './render/scenes.js';
@@ -7,7 +18,11 @@ import * as Sim from './game/sim.js';
 import { resourcesHtml, leftHtml, rightHtml, battleBarsHtml, reportHtml, offlineHtml, factionPickerHtml, PRIORITIES } from './ui/ui.js';
 
 const $ = s => document.querySelector(s);
-let loaded = Sim.load(localStorage);
+let crashToast = 0;
+installErrorHandlers(e => { if (Date.now() - crashToast > 10000) { crashToast = Date.now(); toast('warn', `Fehler protokolliert: ${e.msg.slice(0, 80)} (Feedback-Knopf hilft uns)`); } });
+let loaded;
+try { loaded = Sim.load(localStorage); } catch (e) { logError(e, 'load'); loaded = { state: null, needsFaction: true, corrupt: true }; }
+let noSaveOnUnload = false;
 let state = loaded.state;
 let awaitingFaction = false;
 const ui = { view: 'galaxy', selectedSystem: 'helios', systemView: 'helios', selectedPlanet: null, selectedFleet: null, prevView: 'galaxy', panel: 'main' };
@@ -19,6 +34,8 @@ function applySettings() {
 }
 applySettings();
 const R = new Renderer($('#c'), $('#labels'));
+const perf = new PerfMonitor(l => { R.setQuality(l); dirty = true; }, settings.quality === 'auto' ? (matchMedia('(pointer: coarse)').matches ? 'mittel' : 'hoch') : settings.quality);
+perf.auto = settings.quality === 'auto' && flags.autoQuality; R.setQuality(perf.level);
 R.onBoom = size => Audio.sfx('boom', size);
 addEventListener('pointerdown', () => Audio.unlock(), { capture: true }); addEventListener('keydown', () => Audio.unlock(), { capture: true });
 R.setView('galaxy'); R.focusSystem('helios');
@@ -43,6 +60,7 @@ if (!state || loaded.needsFaction) {
 } else {
   ui.selectedFleet = state.fleets.find(f => f.owner === 'player')?.id ?? null;
   if (loaded.offline) openModal(offlineHtml(loaded.offline));
+  if (loaded.restored) setTimeout(() => toast('warn', 'Hauptspielstand war beschädigt – Backup wurde geladen.'), 500);
 }
 
 // ---------- Ansichten ----------
@@ -70,6 +88,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'i') { ui.panel = ui.panel === 'empire' ? 'main' : 'empire'; dirty = true; }
   else if (k === '/' || k === 'p') { e.preventDefault(); openSearch(); }
   else if (k === 'o') openSettings();
+  else if (e.key === '`' || e.key === '^' || e.key === 'F9') { if (flags.debugPanel) openDebug(); }
   else if (k === 'z' && (e.ctrlKey || e.metaKey)) undoLast();
   else if (k === 'escape') { closeModal(); ui.selectedPlanet = null; ui.panel = 'main'; dirty = true; }
 });
@@ -119,6 +138,7 @@ function act(name, id, el) {
     case 'undo': undoLast(); break;
     case 'jump': jump(id); return;
     case 'settings': openSettings(); return;
+    case 'consentreset': localStorage.removeItem('gatebreaker-consent'); closeModal(); showGate(); return;
     case 'selfleet': ui.selectedFleet = +id; break;
     case 'split': err = Sim.actions.splitFleet(state, +id); break;
     case 'merge': err = Sim.actions.mergeFleets(state, +id); break;
@@ -157,6 +177,21 @@ function act(name, id, el) {
     case 'pickfaction': startWithFaction(id); return;
     case 'deselect': ui.selectedPlanet = null; ui.panel = 'main'; break;
     case 'closemodal': closeModal(); break;
+    case 'newgame': if (confirm('Spielstand wirklich löschen und neu beginnen?')) { localStorage.removeItem(Sim.SAVE_KEY); openModal(factionPickerHtml()); awaitingFaction = true; } return;
+    case 'exile': { const pid = Sim.exileRestart(state); closeModal(); ui.selectedSystem = state.planets[pid].system; setView('galaxy'); break; }
+    case 'restorebackup': restoreBackup(); return;
+    case 'feedback': openFeedback(); return;
+    case 'fb-download': case 'fb-mail': case 'fb-issue': sendFeedback(name); return;
+    case 'export': download(`gatebreaker-${VERSION}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, exportSave(state, VERSION)); track('exports'); toast('info', 'Spielstand exportiert.'); return;
+    case 'savemenu': openSaveMenu(); return;
+    case 'cloud-up': case 'cloud-down': cloud(name === 'cloud-up'); return;
+    case 'changelog': openModal(changelogHtml()); return;
+    case 'menu': openMenu(); return;
+    case 'debug': openDebug(); return;
+    case 'dbg-copy': navigator.clipboard?.writeText(localStorage.getItem(Sim.SAVE_KEY) || '').then(() => toast('info', 'Save in Zwischenablage.'), () => toast('warn', 'Kopieren nicht erlaubt.')); return;
+    case 'dbg-clearerr': clearErrors(); openDebug(); return;
+    case 'dbg-crash': setTimeout(() => { throw new Error('Testfehler aus dem Debug-Panel'); }); return;
+    case 'dbg-reset': if (confirm('Spielstand UND Backup löschen?')) { noSaveOnUnload = true; localStorage.removeItem(Sim.SAVE_KEY); localStorage.removeItem(BACKUP_KEY); location.reload(); } return;
   }
   if (err) toast('warn', err);
   dirty = true; holding = false; flush();
@@ -212,6 +247,8 @@ function flush() {
 }
 function drainEvents() {
   for (const e of state.events) {
+    if (e.endscreen) { openModal(endscreenHtml(e.endscreen, state)); track(e.endscreen); continue; }
+    if (e.battle) track('battles');
     if (e.battle) toast('alert', e.text, () => setView('battle'));
     else if (e.report) { if (!e.auto && !state.battle) openModal(reportHtml(state.lastReport)); else toast(e.level, e.text + ' (Klick: Bericht)', () => openModal(reportHtml(state.lastReport))); }
     else if (!e.quiet) toast(e.level, e.text);
@@ -222,6 +259,9 @@ function frame(now) {
   if (!state) { requestAnimationFrame(frame); return; }
   const gap = (now - last) / 1000; const dt = Math.min(0.25, gap); last = now;
   if (gap > 1.5) { let l = Math.min(gap, 8 * 3600); while (l > 0) { const d = Math.min(1, l); Sim.tick(state, d, { offline: true }); l -= d; } }
+  perf.frame(gap);
+  if (gated || crashed) { R.render(); requestAnimationFrame(frame); return; }
+  try {
   let left = dt; while (left > 1e-6) { const d = Math.min(0.05, left); Sim.tick(state, d); left -= d; }
   if (state.battle && battleRef !== state.battle) { battleRef = state.battle; R.buildBattle(state.battle); syncBattleControls(); setView('battle'); }
   if (!state.battle && battleRef) { battleRef = null; if (ui.view === 'battle') setView(ui.prevView || 'galaxy'); }
@@ -231,12 +271,23 @@ function frame(now) {
   if (R.view === 'battle' && state.battle) { R.updateBattle(state.battle); drawMinimap(state.battle); if (state.battle.shots?.length) Audio.sfx('shot'); }
   Audio.setTension(state.battle ? 1 : 0);
   uiAcc += dt; if (uiAcc > 0.25 || dirty) { uiAcc = 0; dirty = false; flush(); }
-  saveAcc += dt; if (saveAcc > 5 && !awaitingFaction) { saveAcc = 0; Sim.save(state, localStorage); }
-  R.render();
+  saveAcc += dt; if (saveAcc > 5 && !awaitingFaction && !noSaveOnUnload) { saveAcc = 0; Sim.save(state, localStorage); }
+  playAcc += dt; if (playAcc > 60) { playAcc = 0; track('playMinutes'); }
+  } catch (e) { onFrameError(e); }
+  try { R.render(); } catch (e) { onFrameError(e); }
   requestAnimationFrame(frame);
 }
-addEventListener('beforeunload', () => { if (state && !awaitingFaction) Sim.save(state, localStorage); });
-document.addEventListener('visibilitychange', () => { if (document.hidden && state && !awaitingFaction) Sim.save(state, localStorage); });
+// Absturzschutz: einzelne Fehler protokollieren und weiterlaufen; bei Fehlerserie anhalten und Optionen anbieten
+let errTimes = [], crashed = false, playAcc = 0;
+function onFrameError(e) {
+  logError(e, 'frame'); const t = performance.now(); errTimes = errTimes.filter(x => t - x < 10000); errTimes.push(t);
+  if (errTimes.length >= 5 && !crashed) { crashed = true;
+    openModal(`<h2>Das Spiel ist ins Stocken geraten</h2><p>Mehrere Fehler in kurzer Zeit (${(e?.message || e).toString().slice(0, 120)}). Der Spielstand wurde nicht überschrieben.</p>
+      <div class="row"><button data-act="export">⬇ Spielstand exportieren</button> <button data-act="restorebackup">Backup laden</button> <button data-act="feedback">Fehler melden</button> <button id="crash-resume">Weiter versuchen</button></div>`);
+    $('#crash-resume').addEventListener('click', () => { crashed = false; errTimes = []; closeModal(); }); }
+}
+addEventListener('beforeunload', () => { if (state && !awaitingFaction && !noSaveOnUnload && !gated) Sim.save(state, localStorage); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && state && !awaitingFaction && !noSaveOnUnload && !gated) Sim.save(state, localStorage); });
 setView('galaxy');
 requestAnimationFrame(frame);
 // ---------- Rückgängig (5 s) ----------
@@ -282,6 +333,7 @@ function openSettings() {
   openModal(settingsHtml(settings));
   $('#modal-body').querySelectorAll('[data-set]').forEach(inp => inp.addEventListener('input', () => {
     const k = inp.dataset.set; settings[k] = inp.type === 'checkbox' ? inp.checked : +inp.value;
+    if (k === 'quality') { settings.quality = inp.value; perf.auto = inp.value === 'auto'; if (!perf.auto) perf.set(inp.value); }
     if (k === 'scale') { settings.scale = clampScale(inp.value); $('#set-scale').textContent = Math.round(settings.scale * 100) + '%'; }
     saveSettings(settings); applySettings(); dirty = true;
   }));
@@ -301,4 +353,68 @@ function drawMinimap(b) {
     if (settings.colorblind && u.side !== 'player') g.fillRect(x - r, y - r, r * 2, r * 2); else { g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
   }
 }
-window.gb = { get state() { return state; }, set state(s) { state = s; }, Sim, ui, setView, R, startWithFaction, settings: () => settings, Audio, undoLast };
+// ---------- Beta: Zugang, Feedback, Spielstand, Debug, Updates ----------
+let gated = false;
+function showGate() {
+  const g = $('#gate'); const consent = getConsent();
+  if (!consent) { gated = true; g.classList.remove('hidden'); g.querySelector('.panel').innerHTML = consentHtml();
+    const t = $('#c-terms'); t.addEventListener('change', () => { $('#c-ok').disabled = !t.checked; });
+    $('#c-ok').addEventListener('click', () => { setConsent($('#c-analytics').checked); showGate(); }); return; }
+  if (flags.inviteGate && !unlocked()) { gated = true; g.classList.remove('hidden'); g.querySelector('.panel').innerHTML = inviteHtml();
+    const go = async () => { const h = await checkInvite($('#inv-code').value); if (h) { unlock(h); showGate(); } else $('#inv-err').textContent = 'Ungültiger Einladungscode.'; };
+    $('#inv-ok').addEventListener('click', go); $('#inv-code').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') go(); }); return; }
+  gated = false; g.classList.add('hidden'); last = performance.now(); track('sessions');
+}
+showGate();
+loadFlags().then(() => { if (gated && getConsent() && !flags.inviteGate) showGate(); perf.auto = settings.quality === 'auto' && flags.autoQuality;
+  if (flags.updateCheck) startUpdateCheck((j, native) => toast('alert', native ? `Neue Version v${j.version} verfügbar – neue APK im GitHub-Release.` : `Neue Version v${j.version} verfügbar – tippen zum Neuladen.`, () => { if (!native) { Sim.save(state, localStorage); location.reload(); } }));
+  $('#btn-feedback')?.classList.toggle('hidden', !flags.feedback); });
+function openFeedback() { openModal(feedbackHtml()); $('#fb-text').focus(); }
+function sendFeedback(kind) {
+  const text = ($('#fb-text')?.value || '').trim() || '(kein Text)'; const r = buildReport(text, state, { includeSave: $('#fb-save')?.checked !== false, settings });
+  if (kind === 'fb-download') download(`gatebreaker-feedback-${VERSION}-${Date.now()}.json`, JSON.stringify(r, null, 1));
+  else if (kind === 'fb-mail') location.href = mailtoUrl(r);
+  else window.open(issueUrl(r), '_blank', 'noopener');
+  track('feedback'); toast('info', 'Danke für dein Feedback!');
+}
+function openSaveMenu() {
+  openModal(saveMenuHtml({ backupAt: +localStorage.getItem(BACKUP_KEY + '-at') || 0, saveVersion: SAVE_VERSION, cloud: flags.cloudSaves && flags.cloudUrl, loggedIn: !!localStorage.getItem('gatebreaker-cloud-token') }));
+  $('#imp-file').addEventListener('change', async ev => {
+    const f = ev.target.files[0]; if (!f) return;
+    try { const st = parseImport(await f.text()); st.lastSave = Date.now(); noSaveOnUnload = true; localStorage.setItem(Sim.SAVE_KEY, JSON.stringify(st)); toast('info', 'Import erfolgreich – lade neu…'); setTimeout(() => location.reload(), 400); }
+    catch (e) { $('#imp-err').textContent = e.message; }
+  });
+}
+async function cloud(up) {
+  const msg = t => { const m = $('#cl-msg'); if (m) m.textContent = t; };
+  let c; try {
+    msg('Verbinde…'); c = await new NetClient(flags.cloudUrl).connect(); const tok = localStorage.getItem('gatebreaker-cloud-token');
+    if (tok) { try { await c.resume(tok); } catch { localStorage.removeItem('gatebreaker-cloud-token'); throw new Error('Sitzung abgelaufen – Code erneut eingeben.'); } }
+    else { const r = await c.login($('#cl-code')?.value || ''); localStorage.setItem('gatebreaker-cloud-token', r.token); }
+    if (up) { await c.saveCloud(state, VERSION); msg('Hochgeladen ✔'); }
+    else { const s = await c.loadCloud(); if (!s) { msg('Kein Cloud-Spielstand.'); return; } const st = parseImport(JSON.stringify(s.state)); st.lastSave = Date.now(); noSaveOnUnload = true; localStorage.setItem(Sim.SAVE_KEY, JSON.stringify(st)); msg('Geladen – starte neu…'); setTimeout(() => location.reload(), 400); }
+  } catch (e) { msg('Fehler: ' + e.message); logError(e, 'cloud'); } finally { c?.close(); }
+}
+function restoreBackup() {
+  const b = localStorage.getItem(BACKUP_KEY); if (!b) { toast('warn', 'Kein Backup vorhanden.'); return; }
+  try { parseImport(b); } catch (e) { toast('warn', 'Backup ungültig: ' + e.message); return; }
+  noSaveOnUnload = true; localStorage.setItem(Sim.SAVE_KEY, b); location.reload();
+}
+function openMenu() {
+  openModal(`<h2>Menü</h2><div class="menu">
+    <button data-act="feedback">✉ Feedback / Fehler melden</button><button data-act="savemenu">💾 Spielstand: Export, Import, Backup</button>
+    <button data-act="settings">⚙ Einstellungen</button><button data-act="changelog">📜 Changelog</button>
+    <a class="btnlike" href="./datenschutz.html" target="_blank">Datenschutz</a><a class="btnlike" href="./impressum.html" target="_blank">Impressum</a><a class="btnlike" href="./beta-bedingungen.html" target="_blank">Beta-Bedingungen</a>
+    <button data-act="consentreset">Einwilligung ändern</button></div><p class="muted">Gatebreaker v${VERSION}</p><button data-act="closemodal">Schließen</button>`);
+}
+function openDebug() {
+  const raw = localStorage.getItem(Sim.SAVE_KEY) || '';
+  openModal(debugHtml({ fps: perf.fps, quality: perf.level, saveSize: raw.length, flags, errors: getErrors(), analytics: getAnalytics(), savePreview: raw.slice(0, 1500) + (raw.length > 1500 ? ' …' : '') }));
+  $('#modal-body').querySelectorAll('[data-flag]').forEach(c => c.addEventListener('change', () => { setLocalFlag(c.dataset.flag, c.checked); toast('info', `Flag ${c.dataset.flag} = ${c.checked} (lokal)`); }));
+}
+$('#ver').textContent = 'v' + VERSION;
+let verTaps = [];
+$('#ver').addEventListener('click', e => { e.stopPropagation(); const t = Date.now(); verTaps = verTaps.filter(x => t - x < 2000); verTaps.push(t); if (verTaps.length >= 5 && flags.debugPanel) { verTaps = []; openDebug(); } else if (verTaps.length === 1) setTimeout(() => { if (verTaps.length === 1) openModal(changelogHtml()); }, 450); });
+$('#btn-feedback')?.addEventListener('click', openFeedback);
+$('#btn-menu')?.addEventListener('click', openMenu);
+window.gb = { get state() { return state; }, set state(s) { state = s; }, Sim, ui, setView, R, startWithFaction, settings: () => settings, Audio, undoLast, perf, flags, showGate, version: VERSION, exportText: () => exportSave(state, VERSION), feedbackReport: t => buildReport(t, state), issueUrl: t => issueUrl(buildReport(t, state, { includeSave: false })) };

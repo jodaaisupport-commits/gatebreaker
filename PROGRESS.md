@@ -19,3 +19,14 @@ Ausprobieren: [K] Krieg-Panel; Flotte wählen → Patrouille/Abfangen; Hydra (He
 - 89 Schalter für Partikel und Bildschirmwackeln
 - 91–93 docs/SERVER.md, server/ (Node + ws, autoritativ, Whitelist), server/schema.sql. Nichts deployt, keine bezahlten Ressourcen
 - Tests: Rückgängig/Einstellungen (Unit), e2e: Rückgängig, Einstellungen, Suche, Träger/Flaggschiff-Live-Schlacht (screenshots/10-traeger-flaggschiff.png)
+
+## v0.6.0 – Closed Beta
+- Spielstand: Save-Version 4 mit schrittweisen Migrationen, Validierung und NaN-Reparatur. Autosave alle 5 s, Backup-Slot alle 60 s, Rückfall aufs Backup bei kaputtem Hauptstand. Export und Import als .json-Datei.
+- Stabilität: globaler Fehlerfang mit lokalem Fehlerlog. Absturzschutz in der Hauptschleife (Fehlerserie → Export/Backup/Melden). Automatische Grafikqualität (Ziel 30+ FPS).
+- Kern-Loop: Draxis baut Träger und ein Flaggschiff. Neue Freibeuter, die Waffenruhen ignorieren; eine Waffenruhe stoppt nur Kämpfe gegen Draxis. Sieg- und Niederlage-Bildschirm mit Exil-Neustart. Notfallhilfe gegen Sackgassen.
+- Feedback-Knopf (Datei, E-Mail oder GitHub-Issue, mit Version, Fehlern und Save-Snapshot). Sentry nur mit VITE_SENTRY_DSN.
+- Sichtbare Version, Changelog-Panel, Update-Hinweis über version.json.
+- Rechtliches: Datenschutz, Impressum und Beta-Bedingungen (Platzhalter markiert). Einwilligungsdialog; Analytics nur lokal und opt-in.
+- Feature-Flags (flags.json plus lokale Overrides). Debug-Panel per ` / ^ / F9 oder 5× Tippen auf die Version.
+- Beta-Zugang: Einladungscodes clientseitig über SHA-256-Hashes (schwache Sperre). src/net-Client und Server mit Login und Cloud-Saves, lokal getestet und nicht deployt.
+- docs/BETA.md (Checkliste, bekannte Bugs, Tester-Anleitung), docs/BALANCING.md

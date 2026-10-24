@@ -191,7 +191,7 @@ export function offlineHtml(o) {
 }
 
 export function factionPickerHtml() {
-  return `<h2>Fraktion wählen</h2><p class="muted">Gatebreaker v0.5 – wähle dein Startimperium. Die Wahl wird gespeichert.</p>
+  return `<h2>Fraktion wählen</h2><p class="muted">Gatebreaker v0.6 – wähle dein Startimperium. Die Wahl wird gespeichert.</p>
     ${FACTION_ORDER.map(id => { const f = FACTIONS[id]; return `<div class="item"><div class="top"><b>${f.name}</b><button data-act="pickfaction" data-id="${id}">Wählen</button></div>
       <div class="stats">${f.desc}</div><div class="blue">＋ ${f.bonus}</div><div class="amber">− ${f.malus}</div></div>`; }).join('')}
     <p class="muted" style="margin-top:8px">Eigene Fraktion aus Punkten folgt später.</p>`;

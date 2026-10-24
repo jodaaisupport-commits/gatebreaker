@@ -1,6 +1,7 @@
 // Headless-Test: lädt den Build, prüft die Konsole, spielt den Kern-Loop durch und macht Screenshots.
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 const port = 4791; const wait = ms => new Promise(r => setTimeout(r, ms));
 const srv = spawn('npx', ['vite', 'preview', '--port', String(port), '--strictPort'], { stdio: 'pipe' });
 await wait(2500);
@@ -17,6 +18,19 @@ try {
   await page.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle0' });
   await page.evaluate(() => { localStorage.clear(); }); await page.reload({ waitUntil: 'networkidle0' });
   await wait(800);
+  // v0.6 Beta-Zugang: Einwilligung + Einladungscode
+  check(await page.evaluate(() => !document.querySelector('#gate').classList.contains('hidden') && !!document.querySelector('#c-terms')), 'Einwilligungsdialog beim ersten Start');
+  check(await page.evaluate(() => document.querySelector('#c-ok').disabled), 'Weiter erst nach Zustimmung');
+  await page.screenshot({ path: 'screenshots/20-einwilligung.png' });
+  await act(page, '#c-terms'); await act(page, '#c-analytics'); await act(page, '#c-ok'); await wait(300);
+  check(await page.evaluate(() => !!document.querySelector('#inv-code')), 'Einladungscode-Abfrage');
+  await page.type('#inv-code', 'GB-FALSCH-0000-0000'); await act(page, '#inv-ok'); await wait(400);
+  check(await page.evaluate(() => document.querySelector('#inv-err').textContent.includes('Ungültig') && gb.state && !document.querySelector('#gate').classList.contains('hidden')), 'falscher Code abgelehnt');
+  await page.screenshot({ path: 'screenshots/21-einladung.png' });
+  if (process.env.GB_TEST_INVITE) { await page.$eval('#inv-code', e => { e.value = ''; }); await page.type('#inv-code', process.env.GB_TEST_INVITE.toLowerCase()); await act(page, '#inv-ok'); await wait(500); }
+  else { const h = JSON.parse(readFileSync(new URL('../src/app/inviteHashes.json', import.meta.url))).hashes[0]; await page.evaluate(x => { localStorage.setItem('gatebreaker-invite', x); gb.showGate(); }, h); await wait(300); }
+  check(await page.evaluate(() => document.querySelector('#gate').classList.contains('hidden')), 'Beta freigeschaltet' + (process.env.GB_TEST_INVITE ? ' (echter Code)' : ' (Hash gesetzt)'));
+  check(await page.evaluate(() => document.querySelector('#ver').textContent === 'v' + gb.version), 'Version sichtbar: ' + await page.$eval('#ver', e => e.textContent));
   // Fraktionswahl (v0.2)
   check(await page.$('[data-act="pickfaction"]'), 'Fraktionswahl sichtbar');
   await act(page, '[data-act="pickfaction"][data-id="bergbau"]'); await wait(600);
@@ -142,6 +156,29 @@ try {
   await page.waitForFunction(() => !gb.state.battle, { timeout: 150000 }); await wait(400);
   await page.evaluate(() => document.querySelector('[data-act="closemodal"]')?.click());
 
+  // v0.6: Changelog, Feedback, Debug, Export/Import, Siegbildschirm
+  await act(page, '#ver'); await wait(700);
+  check(await page.evaluate(() => document.querySelector('#modal-body').innerText.toLowerCase().includes('v0.6.0')), 'Changelog-Panel');
+  await act(page, '[data-act="closemodal"]'); await act(page, '#btn-feedback'); await wait(200);
+  await page.type('#fb-text', 'E2E-Testbericht'); 
+  const rep6 = await page.evaluate(() => gb.feedbackReport('E2E')); const ver = await page.evaluate(() => gb.version);
+  check(rep6.version === ver && rep6.save?.res && Array.isArray(rep6.errors), 'Feedback-Bericht mit Version, Fehlern, Save');
+  check(await page.evaluate(() => gb.issueUrl('Test').startsWith('https://github.com/jodaaisupport-commits/gatebreaker/issues/new?')), 'GitHub-Issue-Link');
+  await page.screenshot({ path: 'screenshots/22-feedback.png' });
+  await act(page, '[data-act="closemodal"]');
+  await page.keyboard.press('Backquote'); await wait(300);
+  check(await page.evaluate(() => document.querySelector('#modal-body').innerText.includes('DEBUG')), 'Debug-Panel per versteckter Taste');
+  await page.screenshot({ path: 'screenshots/23-debug.png' }); await act(page, '[data-act="closemodal"]');
+  await act(page, '#btn-menu'); await wait(200); await act(page, '[data-act="savemenu"]'); await wait(200);
+  check(await page.evaluate(() => !!document.querySelector('[data-act="export"]') && !!document.querySelector('#imp-file')), 'Spielstand-Menü (Export/Import/Backup)');
+  const exp = JSON.parse(await page.evaluate(() => gb.exportText())); exp.state.res.erz = 31337; writeFileSync('/tmp/gb-import.json', JSON.stringify(exp));
+  const inp = await page.$('#imp-file'); await inp.uploadFile('/tmp/gb-import.json');
+  await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 }); await wait(1200);
+  check(await page.evaluate(() => gb.state.res.erz >= 31337), 'Import aus Datei übernommen (Erz ' + await page.evaluate(() => Math.round(gb.state.res.erz)) + ')');
+  await page.evaluate(() => document.querySelector('[data-act="closemodal"]')?.click());
+  await page.evaluate(() => { gb.state.planets['draxis-prime'].owner = 'player'; }); await wait(1200);
+  check(await page.evaluate(() => document.querySelector('#modal-body').innerText.includes('SIEG')), 'Siegbildschirm');
+  await page.screenshot({ path: 'screenshots/24-sieg.png' }); await act(page, '[data-act="closemodal"]');
   // Offline-Fortschritt
   const before = await page.evaluate(() => { gb.state.res.erz = 200; gb.Sim.save(gb.state, localStorage, Date.now() - 3600e3); Storage.prototype.setItem = () => {}; return gb.state.res.erz; });
   await page.reload({ waitUntil: 'networkidle0' }); await wait(1200);

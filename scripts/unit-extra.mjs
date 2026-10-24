@@ -85,4 +85,52 @@ export default async (S, ok, run, rich) => {
     ok(Se.loadSettings(mem).particles === true && Se.loadSettings(mem).scale === 1, 'Einstellungen: Standardwerte');
     Se.saveSettings({ ...Se.DEFAULTS, colorblind: true, shake: false }, mem); const l = Se.loadSettings(mem); ok(l.colorblind && !l.shake, 'Einstellungen persistieren');
     ok(Se.clampScale(3) === 1.4 && Se.clampScale(0.1) === 0.8 && Se.clampScale('x') === 1, 'UI-Skalierung begrenzt'); }
+  // ---------- v0.6 Closed Beta ----------
+  { const IO = await import('../src/game/saveio.js');
+    const mem = () => ({ d: {}, getItem(k) { return k in this.d ? this.d[k] : null; }, setItem(k, v) { this.d[k] = String(v); }, removeItem(k) { delete this.d[k]; } });
+    const old = S.newGame(0, 'militar'); old.version = 2; old.fleets.push({ id: 500, owner: 'ai', ships: { jaeger: 1 }, system: 'draxis', move: null });
+    const steps = IO.migrateSave(old); ok(old.version === IO.SAVE_VERSION && steps.length === 2 && old.fleets.find(f => f.id === 500).faction === 'draxis', `Migration v2→v${IO.SAVE_VERSION} (${steps})`);
+    ok(IO.validateSave(S.newGame(0)).length === 0, 'neuer Stand valide');
+    ok(IO.validateSave({ res: { erz: NaN }, planets: {}, fleets: 'x' }).length >= 3, 'kaputter Stand erkannt');
+    ok(IO.validateSave({ ...S.newGame(0), version: 99 }).some(e => e.includes('neuere')), 'zu neue Save-Version erkannt');
+    const st = S.newGame(0, 'handel'); st.res.erz = 777; const txt = IO.exportSave(st, '0.6.0');
+    const back = IO.parseImport(txt); ok(back.res.erz === 777 && back.faction === 'handel', 'Export/Import-Rundreise');
+    let e = null; try { IO.parseImport('{"format":"gatebreaker-save","state":{"res":5}}'); } catch (x) { e = x; } ok(e && /ungültig/.test(e.message), 'Import ungültiger Datei abgelehnt');
+    e = null; try { IO.parseImport('kein json'); } catch (x) { e = x; } ok(!!e, 'Import von Nicht-JSON abgelehnt');
+    // Autosave + Backup-Slot + Fallback
+    const m = mem(); const g = S.newGame(0, 'bergbau'); g.res.erz = 111; S.save(g, m, 1000); g.res.erz = 222; S.save(g, m, 1000 + 61000);
+    ok(JSON.parse(m.getItem(IO.BACKUP_KEY)).res.erz === 111, 'Backup-Slot enthält vorherigen Stand');
+    S.save(g, m, 1000 + 70000); ok(JSON.parse(m.getItem(IO.BACKUP_KEY)).res.erz === 111, 'Backup nur alle 60 s');
+    m.setItem(S.SAVE_KEY, '{kaputt'); const L = S.load(m, 1000 + 71000); ok(L.state && L.restored && L.state.res.erz >= 111, 'kaputter Hauptstand -> Backup geladen');
+    const bad = S.newGame(0); bad.fleets = null; ok(S.save(bad, m, 2e6) === false && m.getItem(S.SAVE_KEY) === '{kaputt', 'ungültiger Stand überschreibt nichts');
+    const n = S.newGame(0); n.res.erz = NaN; ok(IO.sanitize(n) === 1 && n.res.erz === 0, 'NaN-Ressourcen repariert'); }
+  // Draxis baut Träger + Flaggschiff
+  { const st = S.newGame(0, 'militar'); st.time = 2000; st.ai.budget = 1e6; st.ai.buildTimer = 0;
+    for (let i = 0; i < 40; i++) { st.ai.buildTimer = 0; st.ai.attackTimer = 1e9; S.tick(st, 0.1, { offline: true }); }
+    const ships = {}; for (const f of st.fleets) if (f.owner === 'ai') for (const t in f.ships) ships[t] = (ships[t] || 0) + f.ships[t];
+    ok(ships.flaggschiff === 1, 'Draxis baut genau ein Flaggschiff'); ok(ships.traeger > 0, `Draxis baut Träger (${ships.traeger})`); }
+  // Waffenruhe nur zwischen Spieler und Draxis
+  { const st = S.newGame(0, 'militar'); st.diplo.peaceUntil = 1e9; const hf = st.fleets.find(f => f.owner === 'player'); hf.ships = { jaeger: 20, fregatte: 6 };
+    st.fleets.push({ id: 601, owner: 'ai', faction: 'draxis', name: 'D', ships: { jaeger: 2 }, system: 'helios', move: null, cooldown: 0, role: 'guard' });
+    S.tick(st, 0.05, { offline: true }); ok(!st.lastReport || st.lastReport.system !== 'helios', 'Waffenruhe: kein Kampf gegen Draxis');
+    st.fleets.push({ id: 602, owner: 'ai', faction: 'pirat', name: 'Freibeuter', ships: { jaeger: 2 }, system: 'helios', move: null, cooldown: 0, role: 'raid', raidLeft: 50 });
+    for (let i = 0; i < 3; i++) S.tick(st, 0.05, { offline: true });
+    ok(st.lastReport?.system === 'helios', 'Freibeuter kämpfen trotz Waffenruhe');
+    ok(st.diplo.peaceUntil === 1e9, 'Kampf gegen Freibeuter bricht Waffenruhe nicht'); }
+  { const st = S.newGame(0, 'militar'); st.pirateTimer = 0; const c = st.planets['helios-b']; c.owner = 'player'; c.buildings = S.emptyBuildings();
+    S.tick(st, 0.1, { offline: true }); ok(st.fleets.some(f => f.faction === 'pirat'), 'Freibeuter-Überfall erscheint'); }
+  // Sieg / Niederlage / Sackgasse
+  { const st = S.newGame(0, 'militar'); st.planets['draxis-prime'].owner = 'player'; S.tick(st, 0.1, { offline: true }); S.tick(st, 0.1, { offline: true });
+    ok(st.events.some(e => e.endscreen === 'victory') && st.flags.victory, 'Siegbildschirm-Ereignis'); }
+  { const st = S.newGame(0, 'militar'); for (const p of Object.values(st.planets)) if (p.owner === 'player') p.owner = 'ai';
+    S.tick(st, 0.1, { offline: true }); ok(st.events.some(e => e.endscreen === 'defeat'), 'Niederlage-Ereignis');
+    const pid = S.exileRestart(st); st.events.length = 0; S.tick(st, 0.1, { offline: true }); ok(st.planets[pid].owner === 'player' && !st.events.some(e => e.endscreen) && !st.flags.defeat, 'Exil-Neustart beendet Niederlage'); }
+  { const st = S.newGame(0, 'militar'); for (const f of st.fleets) if (f.owner === 'player') f.ships = {}; Object.assign(st.res, { erz: 0, credits: 0 });
+    for (const p of Object.values(st.planets)) if (p.owner === 'player') { p.queue = []; p.shipQueue = []; p.buildings.mine = 0; p.pop = 0; }
+    for (let i = 0; i < 120 && !st.flags.lastAid; i++) { st.res.erz = 0; st.res.credits = 0; S.tick(st, 1, { offline: true }); }
+    ok(st.res.erz >= 300 && st.flags.lastAid, 'Notfallhilfe gegen Sackgasse'); }
+  // Leistung & Update
+  { const { PerfMonitor } = await import('../src/app/perf.js'); let lv = null; const pm = new PerfMonitor(l => { lv = l; }, 'hoch');
+    for (let i = 0; i < 400; i++) pm.frame(1 / 20); ok(lv === 'mittel' || lv === 'niedrig', `Auto-Qualität senkt bei 20 FPS (${lv})`);
+    const { newer } = await import('../src/app/update.js'); ok(newer('0.6.1', '0.6.0') && !newer('0.6.0', '0.6.0') && newer('0.10.0', '0.9.9'), 'Versionsvergleich'); }
 };

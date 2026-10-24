@@ -96,7 +96,7 @@ export function warfareTick(state, dt, opts = {}) {
     if (f.patrol) {
       state.res.treibstoff = Math.max(0, state.res.treibstoff - 0.05 * shipCount(f) * dt);
       if (state.res.treibstoff <= 0) { f.patrol = false; emit(state, 'warn', `${f.name}: Patrouille mangels Treibstoff beendet.`); continue; }
-      for (const a of state.fleets) if (a.owner === 'ai' && a.move && a.move.t === 0 && a.system === f.system && !a.inBattle && !peace(state)) {
+      for (const a of state.fleets) if (a.owner === 'ai' && a.move && a.move.t === 0 && a.system === f.system && !a.inBattle && !(peace(state) && (a.faction || 'draxis') === 'draxis')) {
         a.move = null; emit(state, 'alert', `Torpatrouille ${f.name} stellt ${a.name} in ${sysById(f.system).name}!`);
       }
     }
@@ -108,7 +108,7 @@ export function warfareTick(state, dt, opts = {}) {
     }
   }
   for (const f of state.fleets) if (f.owner === 'player' && f.intercept && f.move && !f.inBattle) {
-    for (const a of state.fleets) if (a.owner === 'ai' && a.move && !a.inBattle && a.move.from === f.move.to && a.move.to === f.move.from && f.move.t / f.move.total + a.move.t / a.move.total >= 1) {
+    for (const a of state.fleets) if (a.owner === 'ai' && a.move && !a.inBattle && !(peace(state) && (a.faction || 'draxis') === 'draxis') && a.move.from === f.move.to && a.move.to === f.move.from && f.move.t / f.move.total + a.move.t / a.move.total >= 1) {
       const at = f.move.to; f.system = at; a.system = at; f.move = null; a.move = null;
       emit(state, 'alert', `Abgefangen! ${f.name} stellt ${a.name} auf der Route nach ${sysById(at).name}.`);
       break;
@@ -129,7 +129,21 @@ export function warfareTick(state, dt, opts = {}) {
       }
     }
   }
-  for (const f of state.fleets) if (f.owner === 'ai' && f.role === 'raid' && !f.move && !f.inBattle) {
+  // Freibeuter (unabhängig von Draxis, ignorieren Waffenruhen)
+  if (state.pirateTimer == null) state.pirateTimer = 900;
+  state.pirateTimer -= dt;
+  if (state.pirateTimer <= 0) {
+    state.pirateTimer = 700 + Math.random() * 400;
+    const col = Object.values(state.planets).find(p => p.owner === 'player' && !p.home) || Object.values(state.planets).find(p => p.owner === 'player');
+    const from = col && neighbors(col.system).find(n => !Object.values(state.planets).some(p => p.system === n && p.owner));
+    if (col && from) {
+      const n = 2 + Math.floor(state.time / 1200);
+      const r = { id: state.nextId++, owner: 'ai', faction: 'pirat', name: 'Freibeuter', ships: { jaeger: n, bomber: 1 }, system: from, move: { from, to: col.system, t: 0, total: 20, path: [] }, cooldown: 0, role: 'raid', raidLeft: 90 };
+      state.fleets.push(r); emit(state, 'warn', `Freibeuter aus ${sysById(from).name} im Anflug auf ${sysById(col.system).name}! (unabhängig von Waffenruhen)`);
+    }
+  }
+  for (const f of state.fleets) if (f.faction === 'pirat' && !f.move && !f.inBattle) { f.raidLeft -= dt; if (f.raidLeft <= 0) { f.ships = {}; } }
+  for (const f of state.fleets) if (f.owner === 'ai' && f.role === 'raid' && f.faction !== 'pirat' && !f.move && !f.inBattle) {
     f.raidLeft -= dt; if (f.raidLeft <= 0) { const p = path(f.system, 'draxis'); if (p && p.length) { f.move = { from: f.system, to: p.shift(), t: 0, total: travelTime(f, state), path: p }; f.role = 'return'; } else f.role = 'home'; }
   }
   // Verbündete
