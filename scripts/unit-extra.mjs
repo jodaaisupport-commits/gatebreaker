@@ -76,4 +76,13 @@ export default async (S, ok, run, rich) => {
     st.fleets.push({ id: 79, owner: 'ai', name: 'Blockade', ships: { jaeger: 1 }, system: 'kepler', move: null, cooldown: 0, role: 'raid', raidLeft: 999 });
     st.diplo.peaceUntil = 1e9; S.tick(st, 0.1); ok(p.supplyCut && p.owner === 'player', 'Versorgungslinie gekappt (Plünderer erobern nicht)'); }
   ok(!!W.personality(S.newGame(0)), 'KI-Persönlichkeit gesetzt');
+  // v0.5 Batch C
+  { const st = S.newGame(0, 'militar'); rich(st); const hp = Object.values(st.planets).find(p => p.owner === 'player' && p.home);
+    const erz = st.res.erz; ok(!S.actions.build(st, hp.id, 'mine') && st.res.erz < erz, 'Bauauftrag kostet');
+    ok(!S.actions.undoOrder(st, hp.id, 'build') && Math.abs(st.res.erz - erz) < 1e-6 && !hp.queue.length, 'Rückgängig erstattet voll');
+    ok(!!S.actions.undoOrder(st, hp.id, 'build'), 'leere Liste: Fehler'); }
+  { const Se = await import('../src/ui/settings.js'); const mem = { v: null, getItem() { return this.v; }, setItem(k, v) { this.v = v; } };
+    ok(Se.loadSettings(mem).particles === true && Se.loadSettings(mem).scale === 1, 'Einstellungen: Standardwerte');
+    Se.saveSettings({ ...Se.DEFAULTS, colorblind: true, shake: false }, mem); const l = Se.loadSettings(mem); ok(l.colorblind && !l.shake, 'Einstellungen persistieren');
+    ok(Se.clampScale(3) === 1.4 && Se.clampScale(0.1) === 0.8 && Se.clampScale('x') === 1, 'UI-Skalierung begrenzt'); }
 };

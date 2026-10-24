@@ -2,10 +2,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SYSTEMS, GATES, SHIPS } from '../game/data.js';
 import { sysById, neighbors, playerVisible, shipCount } from '../game/sim.js';
 
-const COL_PLAYER = 0x4fc3ff, COL_AI = 0xff4d5e;
+let COL_PLAYER = 0x4fc3ff, COL_AI = 0xff4d5e;
+// Farbenblind-Modus: Blau vs. Orange statt Blau vs. Rot
+export function setPalette(cb) { COL_PLAYER = cb ? 0x3d8bff : 0x4fc3ff; COL_AI = cb ? 0xffa000 : 0xff4d5e; }
+export const FX = { particles: true, shake: true };
 
 function glowTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
@@ -24,27 +28,38 @@ function starfield(n = 3000, r = 900) {
 function label(html, cls = '') { const d = document.createElement('div'); d.className = 'lbl ' + cls; d.innerHTML = html; const o = new CSS2DObject(d); return o; }
 
 function planetTexture(color, type, seed) {
-  const c = document.createElement('canvas'); c.width = 256; c.height = 128; const g = c.getContext('2d');
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256; const g = c.getContext('2d'); g.scale(2, 2);
   const base = new THREE.Color(color); g.fillStyle = '#' + base.getHexString(); g.fillRect(0, 0, 256, 128);
   let s = seed; const r = () => (s = (s * 9301 + 49297) % 233280) / 233280;
   if (type.includes('Gas')) { for (let y = 0; y < 128; y += 4) { const k = 0.75 + r() * 0.5; g.fillStyle = '#' + base.clone().multiplyScalar(k).getHexString(); g.fillRect(0, y, 256, 3 + r() * 5); } }
   else for (let i = 0; i < 160; i++) { const k = 0.6 + r() * 0.7; g.fillStyle = '#' + base.clone().multiplyScalar(k).getHexString(); g.beginPath(); g.arc(r() * 256, r() * 128, 2 + r() * 14, 0, 7); g.fill(); }
+  if (type.includes('Vulkan')) { g.strokeStyle = 'rgba(255,140,40,.8)'; g.lineWidth = 1.2; for (let i = 0; i < 24; i++) { g.beginPath(); let x = r() * 256, y = r() * 128; g.moveTo(x, y); for (let k = 0; k < 5; k++) { x += (r() - 0.5) * 30; y += (r() - 0.5) * 16; g.lineTo(x, y); } g.stroke(); } }
+  if (type.includes('Eis')) { g.fillStyle = 'rgba(255,255,255,.7)'; g.fillRect(0, 0, 256, 14); g.fillRect(0, 114, 256, 14); }
+  if (type.includes('Wüste')) { g.strokeStyle = 'rgba(120,80,30,.35)'; for (let y = 8; y < 128; y += 9) { g.beginPath(); g.moveTo(0, y); for (let x = 0; x <= 256; x += 16) g.lineTo(x, y + Math.sin(x * 0.05 + y) * 3); g.stroke(); } }
+  // Terminator-Schattierung/Rauschen
+  for (let i = 0; i < 900; i++) { g.fillStyle = `rgba(0,0,0,${r() * 0.12})`; g.fillRect(r() * 256, r() * 128, 2, 2); }
   if (type.includes('Ozean') || type.includes('Dschungel')) { g.fillStyle = 'rgba(255,255,255,.35)'; for (let i = 0; i < 30; i++) { g.beginPath(); g.ellipse(r() * 256, r() * 128, 6 + r() * 20, 2 + r() * 4, 0, 0, 7); g.fill(); } }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+function part(g, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
+  g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('uv'); g.scale(sx, sy, sz); g.rotateX(rx); g.rotateY(ry); g.rotateZ(rz); g.translate(x, y, z); return g;
+}
+const H = Math.PI / 2;
+// Schiffsmodelle aus mehreren Teilen (Rumpf, Flügel, Triebwerke, Türme)
 function shipGeometry(type) {
+  const M = parts => { const g = mergeGeometries(parts); g.computeVertexNormals(); return g; };
   switch (type) {
-    case 'jaeger': { const g = new THREE.ConeGeometry(0.7, 2.4, 4); g.rotateX(Math.PI / 2); return g; }
-    case 'bomber': { const g = new THREE.ConeGeometry(1.2, 2.8, 3); g.rotateX(Math.PI / 2); return g; }
-    case 'fregatte': { const g = new THREE.CylinderGeometry(0.6, 1.3, 5.5, 6); g.rotateX(Math.PI / 2); return g; }
-    case 'zerstoerer': { const g = new THREE.OctahedronGeometry(1.5); g.scale(1.2, 0.8, 4.2); return g; }
-    case 'plattform': return new THREE.OctahedronGeometry(3.2, 0);
-    case 'kolonie': { const g = new THREE.CapsuleGeometry(1, 3, 3, 6); g.rotateX(Math.PI / 2); return g; }
-    case 'reparatur': { const g = new THREE.TorusGeometry(1.2, 0.45, 5, 8); return g; }
-    case 'traeger': { const g = new THREE.BoxGeometry(2.6, 0.9, 6.5); return g; }
-    case 'drohne': { const g = new THREE.TetrahedronGeometry(0.7); return g; }
-    case 'flaggschiff': { const g = new THREE.OctahedronGeometry(2); g.scale(1.4, 0.9, 4.5); return g; }
+    case 'jaeger': return M([part(new THREE.ConeGeometry(0.5, 2.4, 4), 0, 0, 0, H), part(new THREE.BoxGeometry(2.4, 0.12, 0.8), 0, 0, -0.5), part(new THREE.BoxGeometry(0.1, 0.6, 0.5), 0, 0.3, -0.9)]);
+    case 'bomber': return M([part(new THREE.ConeGeometry(0.9, 2.8, 3), 0, 0, 0, H), part(new THREE.BoxGeometry(3, 0.15, 1.1), 0, -0.2, -0.4), part(new THREE.CylinderGeometry(0.25, 0.25, 1.6, 6), 1.1, -0.3, -0.2, H), part(new THREE.CylinderGeometry(0.25, 0.25, 1.6, 6), -1.1, -0.3, -0.2, H)]);
+    case 'fregatte': return M([part(new THREE.CylinderGeometry(0.6, 1.2, 5.5, 6), 0, 0, 0, H), part(new THREE.BoxGeometry(0.8, 0.8, 1.2), 0, 0.8, 0.6), part(new THREE.CylinderGeometry(0.15, 0.15, 1.4, 5), 0, 1.1, 1.4, H), part(new THREE.CylinderGeometry(0.45, 0.6, 0.8, 8), 0, 0, -3, H)]);
+    case 'zerstoerer': return M([part(new THREE.OctahedronGeometry(1.5), 0, 0, 0, 0, 0, 0, 1.2, 0.8, 4.2), part(new THREE.BoxGeometry(1.2, 1, 2), 0, 1, -1), part(new THREE.BoxGeometry(4.2, 0.2, 1.4), 0, 0, -2), part(new THREE.CylinderGeometry(0.2, 0.2, 2.2, 5), 0.5, 1.5, 0.5, H), part(new THREE.CylinderGeometry(0.2, 0.2, 2.2, 5), -0.5, 1.5, 0.5, H)]);
+    case 'plattform': return M([part(new THREE.OctahedronGeometry(3.2, 0)), part(new THREE.CylinderGeometry(0.3, 0.3, 9, 6), 0, 0, 0, 0, 0, H)]);
+    case 'kolonie': return M([part(new THREE.CapsuleGeometry(1, 3, 3, 6), 0, 0, 0, H), part(new THREE.TorusGeometry(1.6, 0.25, 4, 12), 0, 0, 0.5)]);
+    case 'reparatur': return M([part(new THREE.TorusGeometry(1.2, 0.45, 5, 8)), part(new THREE.BoxGeometry(0.6, 0.6, 3), 0, 0, 0)]);
+    case 'traeger': return M([part(new THREE.BoxGeometry(2.6, 0.7, 6.5)), part(new THREE.BoxGeometry(3.6, 0.15, 5.5), 0, 0.45, 0.2), part(new THREE.BoxGeometry(0.6, 1.2, 1.2), 1.3, 1, -1.5), part(new THREE.CylinderGeometry(0.5, 0.7, 1, 8), 0.8, 0, -3.6, H), part(new THREE.CylinderGeometry(0.5, 0.7, 1, 8), -0.8, 0, -3.6, H)]);
+    case 'drohne': return M([part(new THREE.TetrahedronGeometry(0.6)), part(new THREE.BoxGeometry(1.4, 0.06, 0.4))]);
+    case 'flaggschiff': return M([part(new THREE.OctahedronGeometry(2), 0, 0, 0, 0, 0, 0, 1.4, 0.9, 4.5), part(new THREE.BoxGeometry(2.2, 1.6, 3), 0, 1.3, -2), part(new THREE.CylinderGeometry(0.5, 0.9, 3, 8), 0, 0, 7.5, H), part(new THREE.BoxGeometry(6, 0.25, 2.5), 0, 0, -3.5), part(new THREE.CylinderGeometry(0.7, 1, 1.2, 8), 1.6, 0, -8.6, H), part(new THREE.CylinderGeometry(0.7, 1, 1.2, 8), -1.6, 0, -8.6, H)]);
     default: return new THREE.IcosahedronGeometry(1, 0);
   }
 }
@@ -67,6 +82,7 @@ export class Renderer {
   }
   disposeView(v) { if (!v) return; v.ctl.dispose(); v.scene.traverse(o => { if (o.isCSS2DObject) o.element.remove(); }); }
 
+  focusSystem(id) { const v = this.views.galaxy; const p = new THREE.Vector3(...sysById(id).pos); const d = v.cam.position.clone().sub(v.ctl.target); v.ctl.target.copy(p); v.cam.position.copy(p).add(d); }
   // ---------- Galaxie ----------
   makeGalaxy() {
     const scene = new THREE.Scene(); const { cam, ctl } = this.makeCam([0, 110, 140]); ctl.minDistance = 40; ctl.maxDistance = 450;
@@ -142,6 +158,7 @@ export class Renderer {
     const planets = [];
     s.planets.forEach((p, i) => {
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.size, 32, 20), new THREE.MeshStandardMaterial({ map: planetTexture(p.color, p.type, i * 77 + 13), roughness: 0.9 }));
+      if (!p.type.includes('Tote') && !p.type.includes('Asteroiden')) { const atm = new THREE.Mesh(new THREE.SphereGeometry(p.size * 1.12, 32, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(p.color).lerp(new THREE.Color(0x9fdcff), 0.5), transparent: true, opacity: 0.22, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false })); mesh.add(atm); const ag = glow(new THREE.Color(p.color).lerp(new THREE.Color(0xffffff), 0.3).getHex(), p.size * 3.2); ag.material.opacity = 0.35; mesh.add(ag); }
       mesh.userData.planet = p.id; const pivot = new THREE.Group(); pivot.rotation.y = i * 2.1; mesh.position.x = p.orbit; pivot.add(mesh); scene.add(pivot);
       if (p.type.includes('Gas')) { const r = new THREE.Mesh(new THREE.RingGeometry(p.size * 1.4, p.size * 2.1, 48), new THREE.MeshBasicMaterial({ color: 0xd9c49c, side: THREE.DoubleSide, transparent: true, opacity: 0.5 })); r.rotation.x = Math.PI / 2.4; mesh.add(r); }
       const orbit = new THREE.Mesh(new THREE.RingGeometry(p.orbit - 0.08, p.orbit + 0.08, 128), new THREE.MeshBasicMaterial({ color: 0x4fc3ff, side: THREE.DoubleSide, transparent: true, opacity: 0.25 })); orbit.rotation.x = Math.PI / 2; scene.add(orbit);
@@ -200,7 +217,7 @@ export class Renderer {
     const lines = new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending })); lines.frustumCulled = false; scene.add(lines);
     const ptGeo = new THREE.BufferGeometry(); ptGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 3), 3)); ptGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX * 3), 3));
     const pts = new THREE.Points(ptGeo, new THREE.PointsMaterial({ size: 1.6, map: GLOW, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); pts.frustumCulled = false; scene.add(pts);
-    this.views.battle = { scene, cam, ctl, units, lines, pts, booms: [], battle: b, tactical: false, target: new THREE.Vector3(), blasts: 0 };
+    this.views.battle = { scene, cam, ctl, units, lines, pts, booms: [], sparks: [], shake: 0, battle: b, tactical: false, target: new THREE.Vector3(), blasts: 0 };
     this.setView(this.view);
   }
   unitMesh(scene, units, u) {
@@ -241,9 +258,31 @@ export class Renderer {
     v.pts.geometry.setDrawRange(0, pi); v.pts.geometry.attributes.position.needsUpdate = true; v.pts.geometry.attributes.color.needsUpdate = true;
     while (v.blasts < (b.blasts?.length || 0)) { const bl = b.blasts[v.blasts++]; this.boom(v, new THREE.Vector3(bl.pos.x, bl.pos.y, bl.pos.z), bl.side, 9); }
     for (const bo of v.booms) { bo.life -= 0.016; bo.s.scale.setScalar(bo.size * (1 + (1 - bo.life) * 4)); bo.s.material.opacity = Math.max(0, bo.life); }
+    this.updateSparks(v);
     v.booms = v.booms.filter(bo => { if (bo.life <= 0) { v.scene.remove(bo.s); return false; } return true; });
   }
-  boom(v, pos, side, size) { const s = glow(side === 'player' ? 0x99ddff : 0xffaa55, 1); s.position.copy(pos); s.material.opacity = 1; v.scene.add(s); v.booms.push({ s, life: 1, size: 4 * size }); }
+  boom(v, pos, side, size) {
+    const s = glow(side === 'player' ? 0x99ddff : 0xffaa55, 1); s.position.copy(pos); s.material.opacity = 1; v.scene.add(s); v.booms.push({ s, life: 1, size: 4 * size });
+    if (FX.particles) {
+      const n = Math.round(14 + size * 8); const g = new THREE.BufferGeometry(); const pa = new Float32Array(n * 3); const vel = [];
+      for (let i = 0; i < n; i++) { pa.set([pos.x, pos.y, pos.z], i * 3); vel.push(new THREE.Vector3().randomDirection().multiplyScalar((6 + Math.random() * 14) * (0.6 + size * 0.25))); }
+      g.setAttribute('position', new THREE.BufferAttribute(pa, 3));
+      const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.2 + size * 0.2, map: GLOW, color: side === 'player' ? 0xbfe8ff : 0xffc070, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+      v.scene.add(pts); v.sparks.push({ pts, vel, life: 1 });
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.2, 32), new THREE.MeshBasicMaterial({ color: 0xffe0b0, transparent: true, opacity: 0.8, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      ring.position.copy(pos); ring.lookAt(v.cam.position); v.scene.add(ring); v.sparks.push({ ring, life: 1, size });
+    }
+    this.onBoom?.(size);
+    if (FX.shake && size >= 3) v.shake = Math.min(3, (v.shake || 0) + size * 0.35);
+  }
+  updateSparks(v, dt = 0.016) {
+    for (const sp of v.sparks) {
+      sp.life -= dt * 1.2;
+      if (sp.pts) { const a = sp.pts.geometry.attributes.position.array; sp.vel.forEach((vv, i) => { a[i * 3] += vv.x * dt; a[i * 3 + 1] += vv.y * dt; a[i * 3 + 2] += vv.z * dt; vv.multiplyScalar(0.97); }); sp.pts.geometry.attributes.position.needsUpdate = true; sp.pts.material.opacity = Math.max(0, sp.life); }
+      if (sp.ring) { sp.ring.scale.setScalar(1 + (1 - sp.life) * 10 * sp.size); sp.ring.material.opacity = Math.max(0, sp.life * 0.8); }
+    }
+    v.sparks = v.sparks.filter(sp => { if (sp.life > 0) return true; const o = sp.pts || sp.ring; v.scene.remove(o); o.geometry.dispose(); o.material.dispose(); return false; });
+  }
 
   pick(ev) {
     const v = this.views[this.view]; if (!v) return null;
@@ -253,5 +292,9 @@ export class Renderer {
     return null;
   }
   focusSystem(id) { const v = this.views.galaxy; const p = new THREE.Vector3(...sysById(id).pos); const d = p.clone().sub(v.ctl.target); v.ctl.target.add(d); v.cam.position.add(d); }
-  render() { const v = this.views[this.view]; if (!v) return; v.ctl.update(); this.r.render(v.scene, v.cam); this.labels.render(v.scene, v.cam); }
+  render() {
+    const v = this.views[this.view]; if (!v) return; v.ctl.update();
+    let off = null; if (v.shake > 0.02 && FX.shake) { off = new THREE.Vector3((Math.random() - 0.5) * v.shake, (Math.random() - 0.5) * v.shake, 0); v.cam.position.add(off); v.shake *= 0.9; } else if (v.shake) v.shake = 0;
+    this.r.render(v.scene, v.cam); this.labels.render(v.scene, v.cam); if (off) v.cam.position.sub(off);
+  }
 }

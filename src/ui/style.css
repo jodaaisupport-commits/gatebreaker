@@ -85,3 +85,33 @@ body.touch button { min-height: 32px; }
 
 #battle-bars { flex-wrap: wrap; } .blog { flex-basis: 100%; }
 #topbar { min-width: 0; } #views { white-space: nowrap; }
+
+/* ---- v0.5: Holo-Theme, Farbenblind, UI-Skalierung, Minikarte, Suche ---- */
+body.cb { --red:#ffa000; --blue:#3d8bff; --amber:#ffd84d; }
+body.cb .lbl.ai, body.cb .red { color:#ffa000; text-decoration: underline dotted; }
+#topbar, #left, #right, #battle-hud > *, #modal-body, #toasts, #help { zoom: var(--ui-scale, 1); }
+.panel { position:relative; background: linear-gradient(160deg, rgba(10,34,60,.82), rgba(4,16,30,.78)); }
+.panel::before { content:''; position:absolute; inset:0; pointer-events:none; border-radius:inherit;
+  background: repeating-linear-gradient(0deg, rgba(79,195,255,.035) 0 1px, transparent 1px 3px);
+  mask: linear-gradient(#000, #000); }
+.panel::after { content:''; position:absolute; inset:-1px; pointer-events:none; border-radius:inherit;
+  background:
+    linear-gradient(var(--blue),var(--blue)) top left/14px 2px no-repeat, linear-gradient(var(--blue),var(--blue)) top left/2px 14px no-repeat,
+    linear-gradient(var(--blue),var(--blue)) top right/14px 2px no-repeat, linear-gradient(var(--blue),var(--blue)) top right/2px 14px no-repeat,
+    linear-gradient(var(--blue),var(--blue)) bottom left/14px 2px no-repeat, linear-gradient(var(--blue),var(--blue)) bottom left/2px 14px no-repeat,
+    linear-gradient(var(--blue),var(--blue)) bottom right/14px 2px no-repeat, linear-gradient(var(--blue),var(--blue)) bottom right/2px 14px no-repeat;
+  filter: drop-shadow(0 0 3px var(--blue)); opacity:.8; }
+#left, #right { position:fixed; }
+h2 { text-shadow: 0 0 8px rgba(79,195,255,.6); animation: holo-flicker 7s infinite; }
+@keyframes holo-flicker { 0%,96%,100% { opacity:1 } 97% { opacity:.6 } 98% { opacity:.95 } 99% { opacity:.7 } }
+button { transition: background .15s, box-shadow .15s; }
+.toast.undo button { margin-left:8px; }
+#minimap { position:absolute; right:12px; top:12px; width:150px; height:150px; border-radius:50%; background:radial-gradient(rgba(6,22,40,.85), rgba(2,8,16,.7)); border:1px solid rgba(79,195,255,.5); box-shadow:0 0 14px rgba(79,195,255,.3); pointer-events:none; }
+#search-q { width:100%; padding:7px 9px; margin:6px 0 8px; background:rgba(2,12,24,.8); color:var(--text); border:1px solid var(--blue); border-radius:4px; font:inherit; }
+#search-res { max-height:50vh; overflow:auto; display:flex; flex-direction:column; gap:4px; margin-bottom:8px; }
+.sres { text-align:left; } .sres small { color:var(--dim); }
+label.set { display:flex; align-items:center; gap:8px; margin:6px 0; }
+@media (max-width: 900px), (max-height: 500px) { #minimap { width:96px; height:96px; top:auto; bottom:150px; right:6px; } }
+#resources { min-width:0; overflow-x:auto; scrollbar-width:none; } #resources::-webkit-scrollbar { display:none; }
+#views { flex-shrink:0; display:flex; gap:4px; }
+@media (max-width: 1500px) { .res { min-width:78px; } #resources { gap:10px; } }

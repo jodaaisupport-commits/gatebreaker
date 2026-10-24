@@ -383,7 +383,7 @@ export const actions = {
     if (p.queue.length >= 3) return 'Bauliste voll (max. 3).';
     const lvl = (p.buildings[key] || 0) + p.queue.filter(q => q.key === key).length;
     const cost = buildingCost(key, lvl); if (!canAfford(state, cost)) return 'Nicht genug Ressourcen.';
-    pay(state, cost); const t = buildingTime(key, lvl); p.queue.push({ key, remaining: t, total: t, level: lvl + 1 }); return null;
+    pay(state, cost); const t = buildingTime(key, lvl); p.queue.push({ key, remaining: t, total: t, level: lvl + 1, cost }); return null;
   },
   buildShip(state, type, count = 1, planetId = null) {
     if (!SHIPS[type] || SHIPS[type].drone) return 'Unbekanntes Schiff.';
@@ -393,7 +393,14 @@ export const actions = {
     if (p.shipQueue.length >= 5) return 'Werftliste voll (max. 5).';
     const cost = {}; for (const r in SHIPS[type].cost) cost[r] = SHIPS[type].cost[r] * count;
     if (!canAfford(state, cost)) return 'Nicht genug Ressourcen.';
-    pay(state, cost); const t = shipTime(state, type, p); p.shipQueue.push({ type, count, remaining: t, total: t }); return null;
+    pay(state, cost); const t = shipTime(state, type, p); p.shipQueue.push({ type, count, remaining: t, total: t, cost }); return null;
+  },
+  // Rückgängig (UI erlaubt das 5 s lang): letzten Auftrag entfernen, volle Erstattung
+  undoOrder(state, planetId, kind) {
+    const p = state.planets[planetId]; if (!p || p.owner !== 'player') return 'Kein eigener Planet.';
+    const list = kind === 'ship' ? p.shipQueue : p.queue; const q = list?.[list.length - 1];
+    if (!q || !q.cost) return 'Nichts rückgängig zu machen.';
+    list.pop(); for (const r in q.cost) state.res[r] = (state.res[r] || 0) + q.cost[r]; return null;
   },
   moveFleet(state, fleetId, target) {
     const f = state.fleets.find(x => x.id === fleetId && x.owner === 'player'); if (!f) return 'Flotte nicht gefunden.';

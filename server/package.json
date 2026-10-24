@@ -1,0 +1,10 @@
+{
+  "name": "gatebreaker-server",
+  "private": true,
+  "version": "0.5.0",
+  "type": "module",
+  "description": "Optionales autoritatives Server-Skelett (Node + WebSocket). Nicht deployt.",
+  "scripts": { "start": "node index.mjs" },
+  "dependencies": { "ws": "^8.18.0" },
+  "optionalDependencies": { "pg": "^8.12.0" }
+}

@@ -110,8 +110,40 @@ try {
   check(await page.evaluate(() => gb.state.planets['vortex-a'].queue.some(q => q.key === 'mine')), 'Mine auf erobertem Planeten in Bauliste');
   await page.screenshot({ path: 'screenshots/05-eroberung.png' });
 
+  // v0.5: 5-s-Rückgängig
+  const q0 = await page.evaluate(() => ({ n: gb.state.planets['vortex-a'].queue.length, erz: gb.state.res.erz }));
+  await act(page, '[data-act="build"][data-id="mine"]'); await wait(300);
+  check(await page.evaluate(() => !!document.querySelector('#undo [data-undo]')), 'Rückgängig-Toast sichtbar');
+  await act(page, '#undo [data-undo]'); await wait(300);
+  const q1 = await page.evaluate(() => ({ n: gb.state.planets['vortex-a'].queue.length, erz: gb.state.res.erz }));
+  check(q1.n === q0.n && Math.abs(q1.erz - q0.erz) < 5, `Bauauftrag rückgängig + erstattet (${q0.n}→${q1.n})`);
+  // Einstellungen: Farbenblind, UI-Größe, Partikel
+  await act(page, '#btn-settings'); await wait(300);
+  await page.evaluate(() => { const c = document.querySelector('[data-set="colorblind"]'); c.checked = true; c.dispatchEvent(new Event('input')); const r = document.querySelector('[data-set="scale"]'); r.value = '1.2'; r.dispatchEvent(new Event('input')); });
+  await wait(300);
+  check(await page.evaluate(() => document.body.classList.contains('cb') && getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim() === '1.2' && JSON.parse(localStorage.getItem('gatebreaker-settings')).colorblind), 'Farbenblind + UI-Größe gespeichert');
+  await page.screenshot({ path: 'screenshots/11-einstellungen.png' });
+  await page.evaluate(() => { const r = document.querySelector('[data-set="scale"]'); r.value = '1'; r.dispatchEvent(new Event('input')); }); await act(page, '[data-act="closemodal"]');
+  // Suche & Springen
+  await act(page, '#btn-search'); await wait(200); await page.type('#search-q', 'kepler'); await wait(200);
+  const hits = await page.$$eval('#search-res .sres', e => e.length); check(hits > 0, `Suche liefert Treffer (${hits})`);
+  await act(page, '#search-res .sres'); await wait(400);
+  check(await page.evaluate(() => gb.ui.selectedSystem === 'kepler' && document.querySelector('#modal').classList.contains('hidden')), 'Sprung zu Kepler');
+  // Träger + Flaggschiff live (Optik-Check)
+  await page.evaluate(() => { const st = gb.state; const hf = st.fleets.find(f => f.owner === 'player' && !f.inBattle && !f.move); hf.ships = { traeger: 2, flaggschiff: 1, fregatte: 6, jaeger: 8 }; hf.system = 'helios';
+    st.fleets.push({ id: 901, owner: 'ai', name: 'Draxis-Wacht', ships: { fregatte: 10, zerstoerer: 4, jaeger: 10 }, system: 'kepler', move: null, cooldown: 0, role: 'guard' });
+    st.explored.kepler = true; gb.ui.selectedFleet = hf.id; const e = gb.Sim.actions.moveFleet(st, hf.id, 'kepler'); if (e) throw new Error(e); for (let i = 0; i < 14 && !st.battle; i++) gb.Sim.tick(st, 1); });
+  await page.waitForFunction(() => gb.state.battle && gb.ui.view === 'battle', { timeout: 8000 });
+  await wait(7000);
+  const vis = await page.evaluate(() => ({ drones: gb.state.battle.units.filter(u => u.drone && u.alive).length, flag: gb.state.battle.units.some(u => u.type === 'flaggschiff'), mini: !!document.querySelector('#minimap') && document.querySelector('#minimap').offsetWidth > 0 }));
+  log('Träger/Flaggschiff:', JSON.stringify(vis));
+  check(vis.flag && vis.mini, 'Flaggschiff in Schlacht + Minikarte sichtbar');
+  await page.screenshot({ path: 'screenshots/10-traeger-flaggschiff.png' });
+  await page.waitForFunction(() => !gb.state.battle, { timeout: 150000 }); await wait(400);
+  await page.evaluate(() => document.querySelector('[data-act="closemodal"]')?.click());
+
   // Offline-Fortschritt
-  const before = await page.evaluate(() => { gb.Sim.save(gb.state, localStorage, Date.now() - 3600e3); Storage.prototype.setItem = () => {}; return gb.state.res.erz; });
+  const before = await page.evaluate(() => { gb.state.res.erz = 200; gb.Sim.save(gb.state, localStorage, Date.now() - 3600e3); Storage.prototype.setItem = () => {}; return gb.state.res.erz; });
   await page.reload({ waitUntil: 'networkidle0' }); await wait(1200);
   log('Offline-Modal:', await page.$eval('#modal-body', e => e.innerText.replace(/\n/g, ' | ')));
   await page.screenshot({ path: 'screenshots/06-offline.png' });
