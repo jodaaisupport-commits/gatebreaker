@@ -40,6 +40,11 @@ try {
   await act(page, '[data-act="sell"][data-id="erz"]'); await wait(200);
   check(await page.evaluate(() => gb.state.market.erz < 1), 'Markt-Verkauf per Klick');
   await page.evaluate(() => { gb.ui.panel = 'main'; }); await wait(200);
+  await page.click('#btn-war'); await wait(400);
+  check(await page.evaluate(() => gb.ui.panel === 'war' && /STORY/i.test(document.querySelector('#left').innerText) && !!document.querySelector('[data-act="peace"]')), 'Krieg-Panel (Story/Frieden/Agenten)');
+  await act(page, '[data-act="hirespy"][data-id="aufklaerung"]'); await wait(200);
+  check(await page.evaluate(() => gb.state.spies.length === 1), 'Agent per Klick angeworben');
+  await page.evaluate(() => { gb.ui.panel = 'main'; }); await wait(200);
   // System betreten, Werft bauen
   await act(page, '[data-act="enter"]'); await wait(600);
   check(await page.evaluate(() => gb.ui.view === 'system'), 'Systemansicht geöffnet');
@@ -113,8 +118,17 @@ try {
   const after = await page.evaluate(() => gb.state.res.erz);
   check(after > before + 300, `Offline-Erträge (Erz ${Math.round(before)} → ${Math.round(after)})`);
   check(await page.evaluate(() => gb.state.faction === 'bergbau'), 'Fraktion nach Reload persistiert');
+  // Mobile Topbar 844x390 (6 Ressourcen)
+  await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 1 }); await wait(500);
+  const tb = await page.evaluate(() => { const t = document.querySelector('#topbar'), r = document.querySelector('#resources'), v = document.querySelector('#views');
+    const tr = t.getBoundingClientRect(); const rr = r.getBoundingClientRect(), vr = v.getBoundingClientRect();
+    return { over: t.scrollWidth - t.clientWidth, res: r.children.length, overlap: rr.right > vr.left + 1, inside: vr.right <= tr.right + 1 && rr.left >= tr.left - 1, h: tr.height }; });
+  console.log('• Topbar 844x390:', JSON.stringify(tb));
+  check(tb.over <= 1 && !tb.overlap && tb.inside && tb.res >= 6, 'Mobile Topbar passt (844×390)');
+  await page.screenshot({ path: '/tmp/gb-mobile.png' });
 } catch (e) { ok = false; console.error(e); }
 finally {
+
   console.log('\nKonsolenfehler/-warnungen:', errors.length ? errors : 'keine');
   console.log(ok && !errors.length ? 'E2E OK' : 'E2E FEHLER');
   await browser.close(); srv.kill(); process.exit(ok && !errors.length ? 0 : 1);

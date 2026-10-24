@@ -53,6 +53,7 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'g') setView('galaxy'); else if (k === 's') setView('system'); else if (k === 'b') setView('battle'); else if (k === 't') R.toggleTactical();
   else if (k === 'f') { ui.panel = ui.panel === 'tech' ? 'main' : 'tech'; dirty = true; }
+  else if (k === 'k') { ui.panel = ui.panel === 'war' ? 'main' : 'war'; dirty = true; }
   else if (k === 'i') { ui.panel = ui.panel === 'empire' ? 'main' : 'empire'; dirty = true; }
   else if (k === 'escape') { closeModal(); ui.selectedPlanet = null; ui.panel = 'main'; dirty = true; }
 });
@@ -64,6 +65,7 @@ $('#btn-new').addEventListener('click', () => {
 });
 $('#btn-report').addEventListener('click', () => state.lastReport ? openModal(reportHtml(state.lastReport)) : toast('info', 'Noch kein Gefechtsbericht.'));
 $('#btn-empire')?.addEventListener('click', () => { ui.panel = ui.panel === 'empire' ? 'main' : 'empire'; dirty = true; flush(); });
+$('#btn-war')?.addEventListener('click', () => { ui.panel = ui.panel === 'war' ? 'main' : 'war'; dirty = true; flush(); });
 $('#btn-tech')?.addEventListener('click', () => { ui.panel = ui.panel === 'tech' ? 'main' : 'tech'; dirty = true; flush(); });
 
 // ---------- Auswahl in 3D ----------
@@ -118,6 +120,20 @@ function act(name, id, el) {
     case 'delorder': err = Sim.actions.removeOrder(state, id); break;
     case 'eprio': err = Sim.actions.energyPrioUp(state, id); break;
     case 'treaty': err = Sim.actions.proposeTreaty(state); break;
+    case 'recruit': err = Sim.actions.recruitTroops(state, id, 5); break;
+    case 'hirespy': err = Sim.actions.hireSpy(state, id); break;
+    case 'spymission': err = Sim.actions.spyMission(state, id); break;
+    case 'expedition': err = Sim.actions.expedition(state, id); break;
+    case 'gateheart': err = Sim.actions.activateGateHeart(state); break;
+    case 'patrol': err = Sim.actions.togglePatrol(state, id); break;
+    case 'intercept': err = Sim.actions.toggleIntercept(state, id); break;
+    case 'wrecks': err = Sim.actions.researchWrecks(state); break;
+    case 'release': err = Sim.actions.releasePrisoners(state); break;
+    case 'gift': err = Sim.actions.giftAlly(state); break;
+    case 'ally': err = Sim.actions.proposeAlliance(state); break;
+    case 'leaveally': err = Sim.actions.leaveAlliance(state); break;
+    case 'peace': err = Sim.actions.peaceTalks(state, id); break;
+    case 'resolveq': err = Sim.actions.resolveQueued(state, id); break;
     default: if (window.gbActs?.[name]) err = window.gbActs[name](state, id, el, ui);
     case 'pickfaction': startWithFaction(id); return;
     case 'deselect': ui.selectedPlanet = null; ui.panel = 'main'; break;

@@ -46,6 +46,7 @@ export function satTarget(state, p) {
   if (state._eDeficit) add(-10, 'Energiemangel');
   if (p.governor?.trait === 'volk') add(10, 'Volkstribun');
   if (p.home) add(5, 'Heimatwelt');
+  if (p.supplyCut) add(-15, 'Versorgung unterbrochen');
   return { t: Math.max(0, Math.min(100, t)), why };
 }
 
@@ -74,7 +75,7 @@ export function empireRates(state) {
     const work = 2 * ((b.mine || 0) + (b.raffinerie || 0) + (b.walzwerk || 0) + (b.fabrik || 0)) || 1;
     const popF = 0.5 + 0.5 * Math.min(1, (p.pop || 0) / work);
     const lawF = L.arbeitszeit === 'lang' ? 1.25 : L.arbeitszeit === 'kurz' ? 0.85 : 1;
-    const pm = (p.strike ? 0 : 1) * popF * lawF * eff.produktion;
+    const pm = (p.strike ? 0 : 1) * popF * lawF * eff.produktion * (p.supplyCut ? 0.5 : 1);
     out.erz += 2.2 * (b.mine || 0) * fx.mineMult * pm;
     out.treibstoff += 1.1 * (b.raffinerie || 0) * fx.fuelMult * pm;
     const walz = state.res.erz > 2 ? (b.walzwerk || 0) * pm : 0;
@@ -206,7 +207,7 @@ export const empireActions = {
     if (state.diplo.war) return 'Im offenen Krieg unmöglich – erst Frieden schließen.';
     if (state.res.credits < 150) return '150 Credits für Gesandte nötig.';
     state.res.credits -= 150;
-    const chance = Math.max(0.05, Math.min(0.9, 0.35 + (d.relation + 40) / 120));
+    const chance = Math.max(0.05, Math.min(0.9, 0.35 + (d.relation + 40) / 120 + ({ aggressiv: -0.2, haendler: 0.2, vorsichtig: 0.1 }[state.ai?.personality] || 0)));
     if (Math.random() < chance) { d.treaty = true; d.relation += 15; relationLog(state, +15, 'Handelsvertrag geschlossen'); emit(state, 'info', 'Handelsvertrag mit Draxis geschlossen: +1,5 Credits/s.'); }
     else { d.relation -= 3; relationLog(state, -3, 'Vertragsangebot abgelehnt'); emit(state, 'warn', `Draxis lehnt ab (Chance war ${Math.round(chance * 100)}%).`); }
     return null;
@@ -216,5 +217,6 @@ export function relationLog(state, v, why) { const d = state.diplo; d.log = [{ v
 export function breakTreaty(state, why) {
   const d = state.diplo; if (!d) return;
   if (d.treaty) { d.treaty = false; emit(state, 'alert', `Handelsvertrag mit Draxis gebrochen: ${why}.`); }
+  if (d.peaceUntil > state.time) { d.peaceUntil = 0; emit(state, 'alert', `Waffenruhe gebrochen: ${why}.`); }
   d.relation = Math.max(-100, d.relation - 20); relationLog(state, -20, why);
 }

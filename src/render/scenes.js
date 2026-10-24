@@ -40,6 +40,12 @@ function shipGeometry(type) {
     case 'fregatte': { const g = new THREE.CylinderGeometry(0.6, 1.3, 5.5, 6); g.rotateX(Math.PI / 2); return g; }
     case 'zerstoerer': { const g = new THREE.OctahedronGeometry(1.5); g.scale(1.2, 0.8, 4.2); return g; }
     case 'plattform': return new THREE.OctahedronGeometry(3.2, 0);
+    case 'kolonie': { const g = new THREE.CapsuleGeometry(1, 3, 3, 6); g.rotateX(Math.PI / 2); return g; }
+    case 'reparatur': { const g = new THREE.TorusGeometry(1.2, 0.45, 5, 8); return g; }
+    case 'traeger': { const g = new THREE.BoxGeometry(2.6, 0.9, 6.5); return g; }
+    case 'drohne': { const g = new THREE.TetrahedronGeometry(0.7); return g; }
+    case 'flaggschiff': { const g = new THREE.OctahedronGeometry(2); g.scale(1.4, 0.9, 4.5); return g; }
+    default: return new THREE.IcosahedronGeometry(1, 0);
   }
 }
 const GEOS = {}; for (const t in SHIPS) GEOS[t] = shipGeometry(t);
@@ -188,26 +194,30 @@ export class Renderer {
     const s = sysById(b.system); const st = glow(s.star, 300); st.position.set(-300, 120, -500); scene.add(st);
     const grid = new THREE.PolarGridHelper(160, 8, 6, 64, 0x0d3550, 0x0d3550); grid.position.y = -30; grid.material.transparent = true; grid.material.opacity = 0.35; scene.add(grid);
     const units = new Map();
-    for (const u of b.units) {
-      const col = u.side === 'player' ? COL_PLAYER : COL_AI;
-      const m = new THREE.Mesh(GEOS[u.type], new THREE.MeshStandardMaterial({ color: 0x8899aa, emissive: col, emissiveIntensity: 0.45, flatShading: true, metalness: 0.4, roughness: 0.5 }));
-      m.scale.setScalar(1.5); m.position.set(u.pos.x, u.pos.y, u.pos.z); scene.add(m); units.set(u.id, m);
-      if (u.type === 'plattform') { const r = new THREE.Mesh(new THREE.TorusGeometry(5, 0.4, 6, 24), m.material); r.rotation.x = Math.PI / 2; m.add(r); }
-    }
+    for (const u of b.units) this.unitMesh(scene, units, u);
     const MAX = 4000;
     const lineGeo = new THREE.BufferGeometry(); lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 6), 3)); lineGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX * 6), 3));
     const lines = new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending })); lines.frustumCulled = false; scene.add(lines);
     const ptGeo = new THREE.BufferGeometry(); ptGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 3), 3)); ptGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX * 3), 3));
     const pts = new THREE.Points(ptGeo, new THREE.PointsMaterial({ size: 1.6, map: GLOW, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); pts.frustumCulled = false; scene.add(pts);
-    this.views.battle = { scene, cam, ctl, units, lines, pts, booms: [], battle: b, tactical: false, target: new THREE.Vector3() };
+    this.views.battle = { scene, cam, ctl, units, lines, pts, booms: [], battle: b, tactical: false, target: new THREE.Vector3(), blasts: 0 };
     this.setView(this.view);
+  }
+  unitMesh(scene, units, u) {
+    const col = u.side === 'player' ? COL_PLAYER : COL_AI;
+    const m = new THREE.Mesh(GEOS[u.type], new THREE.MeshStandardMaterial({ color: 0x8899aa, emissive: col, emissiveIntensity: 0.45, flatShading: true, metalness: 0.4, roughness: 0.5 }));
+    m.scale.setScalar(1.5); m.position.set(u.pos.x, u.pos.y, u.pos.z); scene.add(m); units.set(u.id, m); m.userData.stage = 0;
+    if (u.type === 'plattform') { const r = new THREE.Mesh(new THREE.TorusGeometry(5, 0.4, 6, 24), m.material); r.rotation.x = Math.PI / 2; m.add(r); }
+    if (u.type === 'flaggschiff') { const h = glow(0xffdd55, 9); m.add(h); }
+    return m;
   }
   toggleTactical() { const v = this.views.battle; if (!v) return; v.tactical = !v.tactical; if (v.tactical) { v.cam.position.set(v.target.x, 230, v.target.z + 1); } else v.cam.position.set(v.target.x, 40, v.target.z + 95); }
   updateBattle(b) {
     const v = this.views.battle; if (!v || v.battle !== b) return;
     const c = new THREE.Vector3(); let n = 0;
     for (const u of b.units) {
-      const m = v.units.get(u.id); if (!m) continue;
+      let m = v.units.get(u.id); if (!m) { if (!u.alive) continue; m = this.unitMesh(v.scene, v.units, u); }
+      if ((u.stage || 0) > m.userData.stage) { m.userData.stage = u.stage; m.material.color.setHex(u.stage >= 2 ? 0x5a3020 : 0x806050); const sm = glow(0xff7a30, 2 + u.stage); sm.position.set((Math.random() - 0.5) * 2, 0.8, (Math.random() - 0.5) * 2); m.add(sm); }
       if (!u.alive) { if (m.visible) { m.visible = false; this.boom(v, m.position, u.side, SHIPS[u.type].size); } continue; }
       m.position.set(u.pos.x, u.pos.y, u.pos.z);
       if (u.heading) m.lookAt(u.pos.x + u.heading.x, u.pos.y + u.heading.y, u.pos.z + u.heading.z); else if (u.type === 'plattform') m.rotation.y += 0.01;
@@ -229,6 +239,7 @@ export class Renderer {
     }
     v.lines.geometry.setDrawRange(0, li * 2); v.lines.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.color.needsUpdate = true;
     v.pts.geometry.setDrawRange(0, pi); v.pts.geometry.attributes.position.needsUpdate = true; v.pts.geometry.attributes.color.needsUpdate = true;
+    while (v.blasts < (b.blasts?.length || 0)) { const bl = b.blasts[v.blasts++]; this.boom(v, new THREE.Vector3(bl.pos.x, bl.pos.y, bl.pos.z), bl.side, 9); }
     for (const bo of v.booms) { bo.life -= 0.016; bo.s.scale.setScalar(bo.size * (1 + (1 - bo.life) * 4)); bo.s.material.opacity = Math.max(0, bo.life); }
     v.booms = v.booms.filter(bo => { if (bo.life <= 0) { v.scene.remove(bo.s); return false; } return true; });
   }

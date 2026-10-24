@@ -67,8 +67,10 @@ body.touch button { min-height: 32px; }
   html, body { font-size: 11px; }
   #topbar { height: 40px; gap: 8px; }
   .logo { display: none; }
-  #resources { gap: 8px; } .res { min-width: 0; } .res b { font-size: 12px; } .res i { font-size: 9px; }
-  #views { display: flex; gap: 3px; flex-wrap: nowrap; } #views button { padding: 3px 6px; font-size: 10px; }
+  #resources { gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; flex: 1 1 auto; } #resources::-webkit-scrollbar { display: none; }
+  .res { min-width: 0; flex: 0 0 auto; } .res b { font-size: 11px; } .res i { font-size: 8px; white-space: nowrap; }
+  #views { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; } #views::-webkit-scrollbar { display: none; } #views button { flex: 0 0 auto; } #views .k { display: none; }
+  #views { display: flex; gap: 2px; flex-wrap: nowrap; } #views button { padding: 2px 5px; font-size: 9.5px; }
   #left, #right { top: 46px; width: 250px; max-height: calc(100% - 70px); padding: 8px; }
   #toasts { right: 10px; top: 46px; width: 240px; } .toast { padding: 5px 8px; font-size: 10px; }
   #battle-bars { width: min(560px, 92vw); top: 4px; gap: 8px; } #battle-bars .side { padding: 4px 8px; }
@@ -80,3 +82,6 @@ body.touch button { min-height: 32px; }
 .item.locked { opacity: 0.45; }
 .badge.amber { color: var(--amber); border-color: var(--amber); }
 #left input[type=text] { width:54px; }
+
+#battle-bars { flex-wrap: wrap; } .blog { flex-basis: 100%; }
+#topbar { min-width: 0; } #views { white-space: nowrap; }

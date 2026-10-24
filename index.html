@@ -5,7 +5,7 @@
   <meta name="theme-color" content="#02060d" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>Gatebreaker v0.3</title>
+  <title>Gatebreaker v0.4</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2212%22 fill=%22none%22 stroke=%22%234fc3ff%22 stroke-width=%224%22/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./src/ui/style.css" />
 </head>
@@ -18,11 +18,12 @@
     <nav id="views">
       <button id="btn-left" class="mobile-only" title="Infopanel ein/aus">☰ Info</button>
       <button id="btn-right" class="mobile-only" title="Flotten ein/aus">⚑ Flotten</button>
-      <button data-view="galaxy" title="Galaxie (G)">[G] Galaxie</button>
-      <button data-view="system" title="System (S)">[S] System</button>
-      <button data-view="battle" id="btn-battle" class="alert hidden" title="Schlacht (B)">[B] Schlacht</button>
-      <button id="btn-empire" title="Imperium: Markt, Lager, Energie, Diplomatie (I)">[I] Imperium</button>
-      <button id="btn-tech" title="Forschung (F)">[F] Forschung</button>
+      <button data-view="galaxy" title="Galaxie (G)"><span class="k">[G] </span>Galaxie</button>
+      <button data-view="system" title="System (S)"><span class="k">[S] </span>System</button>
+      <button data-view="battle" id="btn-battle" class="alert hidden" title="Schlacht (B)"><span class="k">[B] </span>Schlacht</button>
+      <button id="btn-empire" title="Imperium: Markt, Lager, Energie, Diplomatie (I)"><span class="k">[I] </span>Imperium</button>
+      <button id="btn-war" title="Krieg & Diplomatie: Spione, Truppen, Frieden, Story (K)"><span class="k">[K] </span>Krieg</button>
+      <button id="btn-tech" title="Forschung (F)"><span class="k">[F] </span>Forschung</button>
       <button id="btn-report" title="Letzter Gefechtsbericht">Bericht</button>
       <button id="btn-new" title="Spielstand löschen">Neues Spiel</button>
     </nav>

@@ -30,7 +30,7 @@ export function defaultSettings() { return { formation: 'keil', energy: { w: 34,
 export function createBattle({ system, sides, attacker, settings, seed = 12345 }) {
   const b = { system, time: 0, over: false, winner: null, attacker, seed, units: [], shots: [], nextId: 1,
     settings: { player: settings?.player || defaultSettings(), ai: settings?.ai || { formation: 'keil', energy: { w: 40, s: 35, a: 25 }, priority: 'auto' } },
-    start: { player: {}, ai: {} }, lost: { player: {}, ai: {} }, morale: { player: 1, ai: 1 }, anchor: {} };
+    start: { player: {}, ai: {} }, lost: { player: {}, ai: {} }, morale: { player: 1, ai: 1 }, moraleMod: { player: 0, ai: 0 }, anchor: {}, log: [], blasts: [], eventTimer: 15 };
   for (const side of ['player', 'ai']) {
     const dir = side === 'player' ? 1 : -1; const s = sides[side];
     const list = [];
@@ -44,7 +44,7 @@ export function createBattle({ system, sides, attacker, settings, seed = 12345 }
       const def = SHIPS[t]; let pos;
       if (t === 'plattform') { pos = { x: -40 * dir, y: (pi % 2 ? 8 : -8), z: (pi - 1) * 25 }; pi++; }
       else { const o = slotOffset(b.settings[side].formation, mi++, mobile.length); pos = { x: b.anchor[side].x + o.x * dir, y: o.y, z: o.z }; }
-      b.units.push({ id: b.nextId++, side, type: t, pos, slot: mi - 1, hull: def.hull, maxHull: def.hull, shield: def.shield, cd: rnd(b) * def.rate, target: null, retarget: 0, alive: true, phase: rnd(b) * 6.28 });
+      b.units.push({ id: b.nextId++, side, type: t, pos, slot: mi - 1, hull: def.hull, maxHull: def.hull, shield: def.shield, cd: rnd(b) * def.rate, target: null, retarget: 0, alive: true, phase: rnd(b) * 6.28, mods: { w: 1, s: 1, a: 1 }, stage: 0, launchCd: 3, charge: 0 });
     }
   }
   return b;
@@ -63,6 +63,21 @@ function pickTarget(b, u, enemies, prio) {
   }
   return best ? best.id : null;
 }
+
+const MOD_NAMES = { w: 'Waffen', s: 'Schilde', a: 'Antrieb' };
+// Schaden anwenden: Schild absorbiert, Hülle; bei 66%/33% fällt ein Modul aus (sichtbar)
+export function applyDamage(b, tgt, dmg) {
+  let d = dmg; const absorbed = Math.min(tgt.shield, d * 0.85); tgt.shield -= absorbed; d -= absorbed; tgt.hull -= d;
+  const r = tgt.hull / tgt.maxHull; const want = r < 0.33 ? 2 : r < 0.66 ? 1 : 0;
+  while ((tgt.stage || 0) < want && !SHIPS[tgt.type].drone) { tgt.stage = (tgt.stage || 0) + 1; const ks = ['w', 's', 'a'].filter(k => tgt.mods[k] === 1); const k = ks[(rnd(b) * ks.length) | 0] || 'w'; tgt.mods[k] = 0.5; }
+  if (tgt.hull <= 0 && tgt.alive) {
+    tgt.alive = false; if (!tgt.drone) b.lost[tgt.side][tgt.type] = (b.lost[tgt.side][tgt.type] || 0) + 1;
+    if (SHIPS[tgt.type].superweapon && b.moraleMod) { b.moraleMod[tgt.side] -= 0.2; b.log.unshift(`${tgt.side === 'player' ? 'Dein' : 'Draxis-'} Flaggschiff vernichtet! Moral −20%`); }
+    return true;
+  }
+  return false;
+}
+export function moduleDamage(b, side) { const c = { w: 0, s: 0, a: 0 }; for (const u of b.units) if (u.alive && u.side === side && u.mods) for (const k in c) if (u.mods[k] < 1) c[k]++; return Object.entries(c).filter(([, n]) => n).map(([k, n]) => `${MOD_NAMES[k]} ${n}`).join(' · '); }
 
 export function stepBattle(b, dt) {
   if (b.over) return;
@@ -87,7 +102,8 @@ export function stepBattle(b, dt) {
     for (const u of alive[side]) {
       const def = SHIPS[u.type];
       // Schilde regenerieren
-      const maxSh = def.shield * em.s * fm.shield; u.maxShield = maxSh;
+      const mods = u.mods || (u.mods = { w: 1, s: 1, a: 1 });
+      const maxSh = def.shield * em.s * fm.shield * mods.s; u.maxShield = maxSh;
       u.shield = Math.min(maxSh, u.shield + maxSh * 0.035 * dt);
       // Zielwahl
       u.retarget -= dt;
@@ -95,7 +111,7 @@ export function stepBattle(b, dt) {
       const tgt = byId.get(u.target);
       // Bewegung
       if (!def.static) {
-        const speed = def.speed * em.a * fm.speed;
+        const speed = def.speed * em.a * fm.speed * mods.a;
         let goal;
         const small = u.type === 'jaeger' || u.type === 'bomber';
         if (small && tgt) {
@@ -112,6 +128,14 @@ export function stepBattle(b, dt) {
       }
       // Reparatur: heilt den am stärksten beschädigten Verbündeten in Reichweite
       if (def.heal) { let w = null, wr = 1; for (const o of alive[side]) { if (o === u || SHIPS[o.type].static) continue; const r = o.hull / o.maxHull; if (r < wr && d3(o.pos, u.pos) < 45) { wr = r; w = o; } } if (w) w.hull = Math.min(w.maxHull, w.hull + def.heal * dt); }
+      // Träger: Drohnen starten
+      if (def.launch) { u.launchCd -= dt; if (u.launchCd <= 0) { u.launchCd = def.launch.every; const n = b.units.filter(o => o.alive && o.parent === u.id).length;
+        if (n < def.launch.max) { const dd = SHIPS[def.launch.type]; b.units.push({ id: b.nextId++, side, type: def.launch.type, pos: { x: u.pos.x + dir * 3, y: u.pos.y + 2, z: u.pos.z }, hull: dd.hull, maxHull: dd.hull, shield: dd.shield, cd: 1, target: null, retarget: 0, alive: true, phase: rnd(b) * 6.28, mods: { w: 1, s: 1, a: 1 }, stage: 0, parent: u.id, drone: true, dmgMult: u.dmgMult }); } } }
+      // Flaggschiff: Superwaffe
+      if (def.superweapon && tgt) { u.charge += dt; if (u.charge >= def.superweapon.charge && d3(u.pos, tgt.pos) <= def.range * 1.5) { u.charge = 0; const W = def.superweapon; let k = 0;
+        for (const e of enemies) if (e.alive && d3(e.pos, tgt.pos) <= W.radius) { applyDamage(b, e, W.dmg * (u.dmgMult || 1) * mods.w); k++; }
+        b.blasts.push({ pos: { ...tgt.pos }, t: b.time, side }); b.shots.push({ from: { ...u.pos }, to: { ...tgt.pos }, target: -1, t: 0, dur: 0.15, dmg: 0, hit: false, weapon: 'laser', side, super: true });
+        b.log.unshift(`${side === 'player' ? 'Dein' : 'Draxis-'} Flaggschiff feuert die Superwaffe (${k} Ziele)!`); } }
       // Feuern
       u.cd -= dt;
       if (tgt && u.cd <= 0) {
@@ -120,7 +144,7 @@ export function stepBattle(b, dt) {
           u.cd = def.rate * (0.9 + rnd(b) * 0.2);
           const tem = energyMult(b.settings[tgt.side].energy).a;
           const hit = rnd(b) < (1 - Math.min(0.8, EVADE[tgt.type] * tem)) * acc;
-          const dmg = def.dmg * (u.dmgMult || 1) * (DMG_MULT[u.type]?.[tgt.type] || 1) * em.w * fm.dmg;
+          const dmg = def.dmg * (u.dmgMult || 1) * (DMG_MULT[u.type]?.[tgt.type] || 1) * em.w * fm.dmg * mods.w;
           const speedP = def.weapon === 'laser' ? 400 : def.weapon === 'torpedo' ? 45 : 140;
           b.shots.push({ from: { ...u.pos }, to: { ...tgt.pos }, target: tgt.id, t: 0, dur: Math.max(0.08, dist / speedP), dmg, hit, weapon: def.weapon, side });
         }
@@ -134,9 +158,7 @@ export function stepBattle(b, dt) {
       s.done = true;
       const tgt = byId.get(s.target);
       if (tgt && tgt.alive && s.hit) {
-        let d = s.dmg; const absorbed = Math.min(tgt.shield, d * 0.85); tgt.shield -= absorbed; d -= absorbed;
-        tgt.hull -= d;
-        if (tgt.hull <= 0) { tgt.alive = false; b.lost[tgt.side][tgt.type] = (b.lost[tgt.side][tgt.type] || 0) + 1; s.kill = true; }
+        if (applyDamage(b, tgt, s.dmg)) s.kill = true;
       }
     }
   }
@@ -145,15 +167,20 @@ export function stepBattle(b, dt) {
   for (const side of ['player', 'ai']) {
     const total = Object.values(b.start[side]).reduce((a, c) => a + c, 0) || 1;
     const lost = Object.values(b.lost[side]).reduce((a, c) => a + c, 0);
-    b.morale[side] = Math.max(0.1, 1 - 0.9 * lost / total);
+    b.morale[side] = Math.max(0.1, Math.min(1.3, 1 - 0.9 * lost / total + (b.moraleMod?.[side] || 0)));
   }
+  // Moral-Ereignisse
+  if (b.moraleMod) { b.eventTimer -= dt; if (b.eventTimer <= 0) { b.eventTimer = 20; if (rnd(b) < 0.6) {
+    const side = rnd(b) < 0.5 ? 'player' : 'ai'; const E = [['Admiral hält eine flammende Rede', 0.12], ['Heldentat eines Jägerpiloten', 0.08], ['Panik im Maschinenraum', -0.1], ['Funkstörung – Befehle gehen verloren', -0.06]][(rnd(b) * 4) | 0];
+    b.moraleMod[side] += E[1]; b.log.unshift(`${side === 'player' ? 'Deine Flotte' : 'Draxis'}: ${E[0]} (Moral ${E[1] > 0 ? '+' : ''}${Math.round(E[1] * 100)}%)`); } } }
+  if (b.log && b.log.length > 8) b.log.length = 8;
   const pa = b.units.some(u => u.alive && u.side === 'player'); const aa = b.units.some(u => u.alive && u.side === 'ai');
   if (!pa || !aa || b.time > 300) { b.over = true; b.winner = pa && !aa ? 'player' : (!pa && aa ? 'ai' : (b.attacker === 'player' ? 'ai' : 'player')); }
 }
 
 export function survivors(b, side) {
   const r = {}; let platforms = 0;
-  for (const u of b.units) if (u.alive && u.side === side) { if (u.type === 'plattform') platforms++; else r[u.type] = (r[u.type] || 0) + 1; }
+  for (const u of b.units) if (u.alive && u.side === side && !u.drone) { if (u.type === 'plattform') platforms++; else r[u.type] = (r[u.type] || 0) + 1; }
   return { ships: r, platforms };
 }
 

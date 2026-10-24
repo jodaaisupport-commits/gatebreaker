@@ -2,6 +2,7 @@
 import { BUILDING_ORDER } from './data.js';
 import { SYSTEMS, GATES, BUILDINGS, SHIPS, SHIP_ORDER, buildingCost, buildingTime, TRAVEL_TIME, GATE_COOLDOWN, OFFLINE_CAP, RES, FACTIONS, TUTORIAL, TECHS, TECH_ORDER } from './data.js';
 import { initEmpire, empireRates, applyRates, empireTick, plunderShare, empireActions, breakTreaty, initPlanet, homeHeld } from './empire.js';
+import { initWarfare, warfareTick, afterBattle, warfareActions, troopStrength, armyLosses, personality, peace } from './warfare.js';
 import { createBattle, stepBattle, autoResolve, survivors, defaultSettings } from './battleSim.js';
 
 export const SAVE_KEY = 'gatebreaker-save-v2';
@@ -35,7 +36,7 @@ export function newGame(now = Date.now(), factionId = 'bergbau') {
     flags: { wonBattle: false },
     events: [],
   };
-  initEmpire(st);
+  initEmpire(st); initWarfare(st);
   return st;
 }
 
@@ -80,6 +81,8 @@ export function techEffects(state) {
     if (fx.moraleBonus) e.moraleBonus += fx.moraleBonus;
     if (fx.sensors) e.sensors = true; if (fx.spyVision) e.spyVision = true;
   }
+  if (state.wreckLvl) { e.dmgMult *= 1 + 0.04 * state.wreckLvl; e.hullMult *= 1 + 0.03 * state.wreckLvl; }
+  if (state.story?.codex) { e.travelMult *= 0.8; e.dmgMult *= 1.05; }
   return e;
 }
 export function canResearch(state, id) {
@@ -179,6 +182,7 @@ export function tick(state, dt, opts = {}) {
   }
   mergeAI(state);
   aiTick(state, dt);
+  warfareTick(state, dt, opts);
   checkEncounters(state, opts);
 
   if (state.battle) {
@@ -191,7 +195,7 @@ export function tick(state, dt, opts = {}) {
     if (p.defense < max && p.defRegen > 120) { p.defense++; p.defRegen = 0; }
   }
   for (const p of Object.values(state.planets)) if (p.owner === 'player' && !p.home) {
-    if (fleetsIn(state, p.system, 'ai').length && !fleetsIn(state, p.system, 'player').length && !(state.battle && state.battle.system === p.system)) {
+    if (fleetsIn(state, p.system, 'ai').filter(f => f.role !== 'raid').length && !fleetsIn(state, p.system, 'player').length && !(state.battle && state.battle.system === p.system)) {
       p.owner = 'ai'; p.garrison = 50; p.defense = 0; p.buildings = null; p.queue = []; p.shipQueue = []; p.colonized = false;
       emit(state, 'alert', `${planetName(p.id)} wurde von Draxis zurückerobert!`);
     }
@@ -246,9 +250,11 @@ function aiTick(state, dt) {
   const slow = techEffects(state).aiSlow || 1;
   ai.attackTimer -= dt / slow;
   if (ai.attackTimer <= 0) {
-    ai.attackTimer = 360 + Math.random() * 180;
+    ai.attackTimer = (360 + Math.random() * 180) * personality(state).attack;
     const hf = state.fleets.find(f => f.owner === 'ai' && f.system === 'draxis' && !f.move && !f.inBattle);
-    if (hf && shipCount(hf) >= 6 && !state.diplo?.treaty && !(state.diplo?.peaceUntil > state.time)) {
+    const cautiousSkip = personality(state).cautious && fleetPower(hf?.ships || {}) < 1.2 * fleetsIn(state, homePlanet(state)?.system || 'helios', 'player').reduce((a, f) => a + fleetPower(f.ships), 0);
+    if (cautiousSkip) ai.attackTimer = 150;
+    if (hf && !cautiousSkip && shipCount(hf) >= 6 && !state.diplo?.treaty && !(state.diplo?.peaceUntil > state.time)) {
       const atk = { id: state.nextId++, owner: 'ai', name: `Angriffswelle ${++ai.waves}`, ships: {}, system: 'draxis', move: null, cooldown: 0, role: 'attack' };
       for (const t in hf.ships) { const n = Math.floor(hf.ships[t] * 0.6); atk.ships[t] = n; hf.ships[t] -= n; }
       if (shipCount(atk) > 0) {
@@ -274,6 +280,7 @@ function playerDefenseIn(state, sysId) {
 function checkEncounters(state, opts) {
   for (const sys of SYSTEMS) {
     if (state.battle && state.battle.system === sys.id) continue;
+    if (peace(state)) continue;
     const pf = fleetsIn(state, sys.id, 'player').filter(f => !f.inBattle);
     const af = fleetsIn(state, sys.id, 'ai').filter(f => !f.inBattle);
     const aiPlanetsDef = Object.values(state.planets).filter(p => p.system === sys.id && p.owner === 'ai').reduce((a, p) => a + p.defense, 0);
@@ -299,11 +306,13 @@ function checkEncounters(state, opts) {
       u.shield = Math.round(u.shield * fx.shieldMult);
       u.dmgMult = fx.dmgMult * vetMult;
     }
-    b.morale.player = Math.min(1.2, 1 + fx.moraleBonus);
+    const patrolled = pf.some(f => f.patrol);
+    b.moraleMod = { player: fx.moraleBonus + (patrolled ? 0.1 : 0), ai: 0 };
     b.playerFleets = pf.map(f => f.id); b.aiFleets = af.map(f => f.id);
     b._fx = fx;
     for (const f of [...pf, ...af]) f.inBattle = true;
-    if (opts.offline || state.battle) { autoResolve(b); finishBattle(state, b, true); }
+    if (opts.offline) { autoResolve(b); finishBattle(state, b, true); }
+    else if (state.battle) { state.battleQueue.push(b); emit(state, 'alert', `Gefecht in ${sys.name} wartet in der Warteschlange (${state.battleQueue.length}).`); }
     else { state.battle = b; emit(state, 'alert', `Gefecht in ${sys.name}! ${shipCount({ ships: sides.player.ships })} gegen ${shipCount({ ships: sides.ai.ships })} Schiffe.`, { battle: true }); }
   }
 }
@@ -360,6 +369,7 @@ export function finishBattle(state, b, auto) {
   if (aFleet && b.winner === 'player' && shipCount(aFleet) > 0) { const p = path(b.system, 'draxis'); if (p && p.length) { aFleet.move = { from: b.system, to: p.shift(), t: 0, total: travelTime(aFleet, state), path: p }; aFleet.role = 'return'; } }
   if (aFleet && b.winner === 'ai' && aFleet.role === 'attack') aFleet.done = true;
   const report = { system: b.system, systemName: sysById(b.system).name, winner: b.winner, retreat: !!b.retreat, auto, duration: Math.round(b.time), start: b.start, lost: b.lost, salvage, repaired, time: state.time };
+  afterBattle(state, b, report);
   state.lastReport = report;
   if (state.battle === b) state.battle = null;
   emit(state, b.winner === 'player' ? 'info' : 'alert', `${auto ? 'Automatisches Gefecht' : 'Schlacht'} in ${report.systemName}: ${b.winner === 'player' ? 'Sieg' : (b.retreat ? 'Rückzug' : 'Niederlage')}.`, { report: true, auto });
@@ -376,7 +386,8 @@ export const actions = {
     pay(state, cost); const t = buildingTime(key, lvl); p.queue.push({ key, remaining: t, total: t, level: lvl + 1 }); return null;
   },
   buildShip(state, type, count = 1, planetId = null) {
-    if (!SHIPS[type]) return 'Unbekanntes Schiff.';
+    if (!SHIPS[type] || SHIPS[type].drone) return 'Unbekanntes Schiff.';
+    if (SHIPS[type].unique) { const has = state.fleets.some(f => f.owner === 'player' && f.ships[type] > 0) || Object.values(state.planets).some(x => x.shipQueue?.some(q => q.type === type)); if (has || count > 1) return 'Nur ein Flaggschiff erlaubt.'; }
     const p = planetId ? state.planets[planetId] : homePlanet(state);
     if (!p || p.owner !== 'player' || !p.buildings?.werft) return 'Zuerst eine Raumwerft auf diesem Planeten bauen.';
     if (p.shipQueue.length >= 5) return 'Werftliste voll (max. 5).';
@@ -421,8 +432,9 @@ export const actions = {
     if (fleetsIn(state, p.system, 'ai').length || p.defense > 0) return 'Orbit nicht unter Kontrolle.';
     const cost = { credits: 150, treibstoff: 50 }; if (!canAfford(state, cost)) return '150 Credits und 50 Treibstoff nötig.';
     pay(state, cost); breakTreaty(state, `Invasion von ${planetName(p.id)}`);
-    const troops = pf.reduce((a, f) => a + 40 + 3 * (f.ships.jaeger || 0) + 4 * (f.ships.bomber || 0) + 10 * (f.ships.fregatte || 0) + 16 * (f.ships.zerstoerer || 0), 0);
+    const troops = troopStrength(state, pf, p);
     const roll = troops * (0.8 + Math.random() * 0.4);
+    armyLosses(state, roll > p.garrison);
     if (roll > p.garrison) {
       p.owner = 'player'; p.garrison = Math.round(roll - p.garrison); p.bombard = null; p.colonized = false;
       // Eroberte Planeten bekommen volle Bauverwaltung (Startstufe 0, Kraftwerk 1)
@@ -469,6 +481,8 @@ export const actions = {
     return null;
   },
   ...empireActions,
+  ...warfareActions,
+  resolveQueued(state, i) { const b = state.battleQueue.splice(+i || 0, 1)[0]; if (!b) return 'Kein Gefecht.'; autoResolve(b); finishBattle(state, b, true); return null; },
   setBattleSpeed(state, spd) { state.battleSpeed = spd === 2 ? 2 : 1; return null; },
   retreat(state) {
     const b = state.battle; if (!b) return 'Keine Schlacht.';
@@ -493,6 +507,7 @@ function migrate(state) {
   }
   for (const f of state.fleets) if (f.ships && f.ships.kolonie == null) f.ships.kolonie = 0;
   if (!state._empire) { initEmpire(state); state._empire = true; }
+  if (!state._war) initWarfare(state);
 }
 
 export function save(state, storage, now = Date.now()) {
@@ -506,6 +521,7 @@ export function load(storage, now = Date.now()) {
   let state; try { state = JSON.parse(raw); } catch { return { state: null, offline: null, needsFaction: true }; }
   state.events = []; migrate(state);
   if (state.battle) { autoResolve(state.battle); finishBattle(state, state.battle, true); }
+  for (const b of state.battleQueue.splice(0)) { autoResolve(b); finishBattle(state, b, true); }
   const secs = Math.min(OFFLINE_CAP, Math.max(0, (now - state.lastSave) / 1000));
   let offline = null;
   if (secs > 5) {

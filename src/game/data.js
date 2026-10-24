@@ -195,3 +195,46 @@ export const GOV_TRAITS = {
 };
 export const GOV_NAMES = ['Ilsa Varn', 'Torin Kade', 'Mara Quell', 'Joss Halder', 'Edda Rhun', 'Kael Strom', 'Nia Osk', 'Bren Tallow'];
 export const MARKET_BASE = { erz: 0.5, treibstoff: 1.0, energie: 0.8, platten: 1.8, teile: 4.5 };
+
+// ---------- v0.4 Krieg & Diplomatie ----------
+SHIPS.traeger = { name: 'Träger', cost: { erz: 300, treibstoff: 100, credits: 120, teile: 15 }, time: 28, hull: 650, shield: 220, dmg: 6, rate: 1.5, range: 45, speed: 11, size: 3.6, weapon: 'laser', color: 0x88aaff, launch: { type: 'drohne', every: 6, max: 4 } };
+SHIPS.drohne = { name: 'Jagddrohne', cost: {}, time: 0, hull: 25, shield: 5, dmg: 4, rate: 0.5, range: 34, speed: 36, size: 0.7, weapon: 'laser', color: 0x99ccff, drone: true };
+SHIPS.flaggschiff = { name: 'Flaggschiff', cost: { erz: 900, treibstoff: 300, credits: 500, teile: 60 }, time: 60, hull: 2600, shield: 900, dmg: 40, rate: 1.4, range: 70, speed: 9, size: 5, weapon: 'kinetik', color: 0xffdd55, unique: true, superweapon: { charge: 25, dmg: 420, radius: 28 } };
+SHIP_ORDER.push('traeger', 'flaggschiff');
+DMG_MULT.traeger = { bomber: 1.2 }; DMG_MULT.drohne = { bomber: 1.4, zerstoerer: 0.6 }; DMG_MULT.flaggschiff = { zerstoerer: 1.3, traeger: 1.3, plattform: 1.2 };
+DMG_MULT.fregatte.drohne = 1.6; DMG_MULT.jaeger.drohne = 1.2; DMG_MULT.bomber.traeger = 1.5; DMG_MULT.bomber.flaggschiff = 1.4;
+EVADE.traeger = 0.04; EVADE.drohne = 0.5; EVADE.flaggschiff = 0.02;
+
+export const TROOPS = {
+  infanterie: { name: 'Infanterie', cost: { credits: 20, erz: 10 }, power: 5, desc: 'Günstig, solide.' },
+  panzer: { name: 'Panzer', cost: { credits: 40, erz: 40, platten: 5 }, power: 14, desc: '+30% gegen Heimatwelten (Festungen).' },
+  luftlande: { name: 'Luftlandetruppen', cost: { credits: 45, treibstoff: 25 }, power: 9, desc: '+20%, ignorieren Belagerungsbedarf teilweise.' },
+};
+export const SPY_SPECS = {
+  aufklaerung: { name: 'Aufklärer', desc: 'Zeigt 180 s lang die echte Flottenstärke von Draxis.' },
+  sabotage: { name: 'Saboteur', desc: 'Verzögert den nächsten Angriff (+120 s) und kostet Draxis Budget.' },
+  diplomat: { name: 'Diplomat', desc: 'Verbessert die Beziehung zu Draxis (+8).' },
+};
+export const RUINS = {
+  'helios-c': { name: 'Hydra-Orbitalring', text: 'Ein zerbrochener Ring um den Gasriesen. Die Glyphen gleichen den Toren.' },
+  'kepler-b': { name: 'Dünen-Obelisk', text: 'Ein Obelisk, der im Takt der Tore pulsiert.' },
+  'vortex-a': { name: 'Relikt-Archiv', text: 'Ein Archiv der Torbauer – Sternkarten, die keine bekannten Sterne zeigen.' },
+  'draxis-b': { name: 'Asche-Gewölbe', text: 'Tief im Asteroiden: ein versiegeltes Gewölbe mit einem schlagenden Kern.' },
+};
+export const AI_PERSONALITIES = {
+  aggressiv: { name: 'Aggressiv', desc: 'Greift öfter an, verhandelt ungern.', attack: 0.75, talk: -0.2 },
+  haendler: { name: 'Händlerisch', desc: 'Liebt Verträge und Tribute.', attack: 1.15, talk: 0.2 },
+  vorsichtig: { name: 'Vorsichtig', desc: 'Greift nur an, wenn klar überlegen.', attack: 1.0, talk: 0.1, cautious: true },
+};
+export const PEACE_TERMS = {
+  weiss: { name: 'Weißer Frieden', desc: 'Status quo, 10 min Waffenruhe.', need: 1.0 },
+  tribut: { name: 'Tribut fordern', desc: 'Draxis zahlt 400 Credits + Waffenruhe.', need: 1.4 },
+  abtretung: { name: 'Planet abtreten', desc: 'Draxis tritt einen Planeten ab (nicht die Heimatwelt).', need: 1.9 },
+  zahlen: { name: 'Frieden erkaufen', desc: 'Du zahlst 300 Credits für Waffenruhe.', need: 0.5 },
+};
+export const STORY = [
+  { title: 'Das Signal', text: 'Aus Vortex dringt ein uraltes Signal. Erkunde das System.', hint: 'Flotte nach Vortex senden.' },
+  { title: 'Ruinen der Torbauer', text: 'Wer baute die Tore? Starte eine Expedition zu einer Ruine.', hint: 'Flotte zu Hydra (Helios), Dünenfeld, Relikt oder Asche → Planet → Expedition.' },
+  { title: 'Drei Fragmente', text: 'Jede Ruine birgt ein Fragment des Torbauer-Codex. Sammle drei.', hint: 'Weitere Expeditionen.' },
+  { title: 'Das Torherz', text: 'Die Fragmente zeigen auf Vortex: Dort schlummert das Torherz.', hint: 'Flotte in Vortex, dann im Krieg-Panel „Torherz aktivieren“ (200 Cr, 100 Energie).' },
+];

@@ -3,12 +3,17 @@ import { BUILDINGS, BUILDING_ORDER, SHIPS, SHIP_ORDER, RES, RES_LABEL, buildingC
 import { sysById, rates, canAfford, homePlanet, fleetsIn, playerVisible, shipCount, fleetPower, path, shipTime, canResearch, hasTech, techEffects, faction } from '../game/sim.js';
 import { PRIORITIES } from '../game/battleSim.js';
 import { planetPeopleHtml, empireHtml } from './empireUi.js';
+import { warHtml } from './warUi.js';
+import { troopStrength as warTroops, fleetStrengthText, armyPower } from '../game/warfare.js';
+import { RUINS } from '../game/data.js';
+import { moduleDamage } from '../game/battleSim.js';
 export { empireHtml };
 
 const fmt = n => n >= 10000 ? (n / 1000).toFixed(1) + 'k' : Math.floor(n).toString();
 const costHtml = (state, c) => Object.entries(c).filter(([, v]) => v > 0).map(([r, v]) => `<span class="${state.res[r] < v ? 'no' : ''}">${fmt(v)} ${RES_LABEL[r]}</span>`).join(' · ');
 const shipsHtml = s => SHIP_ORDER.filter(t => s?.[t]).map(t => `${s[t]}× ${SHIPS[t].name}`).join(', ') || '<span class="muted">keine Schiffe</span>';
-export const troopStrength = pf => pf.reduce((a, f) => a + 40 + 3 * (f.ships.jaeger || 0) + 4 * (f.ships.bomber || 0) + 10 * (f.ships.fregatte || 0) + 16 * (f.ships.zerstoerer || 0), 0);
+let _st = null;
+export const troopStrength = (pf, p) => warTroops(_st, pf, p);
 const tip = (title, body) => ` title="${title}${body ? '\n' + body : ''}"`;
 
 export function resourcesHtml(state) {
@@ -18,6 +23,8 @@ export function resourcesHtml(state) {
 }
 
 export function leftHtml(state, ui) {
+  _st = state;
+  if (ui.panel === 'war') return warHtml(state);
   if (ui.panel === 'tech') return techHtml(state);
   if (ui.panel === 'empire') return empireHtml(state);
   if (ui.panel && ui.panel !== 'main' && PANELS[ui.panel]) return PANELS[ui.panel](state, ui);
@@ -51,7 +58,7 @@ function systemHtml(state, ui, sysId) {
     }).join('');
     const enemies = vis ? fleetsIn(state, sysId, 'ai') : [];
     const spy = techEffects(state).spyVision && explored;
-    h += `<h3>Flotten</h3>` + ([...fleetsIn(state, sysId, 'player'), ...enemies].map(f => `<div class="item"><span class="${f.owner === 'ai' ? 'red' : 'blue'}">${f.name}</span><div class="stats">${shipsHtml(f.ships)}${spy && f.owner === 'ai' ? ` · Stärke ${fleetPower(f.ships)}` : ''}</div></div>`).join('') || `<div class="muted">${vis ? 'Keine' : 'Keine Sensordaten (keine eigene Präsenz)'}</div>`);
+    h += `<h3>Flotten</h3>` + ([...fleetsIn(state, sysId, 'player'), ...enemies].map(f => `<div class="item"><span class="${f.owner === 'ai' ? 'red' : 'blue'}">${f.name}</span><div class="stats">${shipsHtml(f.ships)}${f.owner === 'ai' ? ` · ${fleetStrengthText(state, f, techEffects(state))}` : ''}</div></div>`).join('') || `<div class="muted">${vis ? 'Keine' : 'Keine Sensordaten (keine eigene Präsenz)'}</div>`);
   }
   h += `<div class="btns">${explored && ui.view !== 'system' ? `<button data-act="enter" data-id="${sysId}">System ansehen</button>` : ''}`;
   const f = state.fleets.find(x => x.id === ui.selectedFleet);
@@ -90,7 +97,8 @@ function planetHtml(state, ui, pid) {
     h += `<div class="stats">${!pf.length ? 'Schicke eine Flotte in den Orbit.' : af.length || st.defense ? '<span class="amber">Orbit umkämpft – besiege Flotte und Abwehr.</span>' : '<span class="blue">Orbit unter deiner Kontrolle.</span>'}</div>`;
     if (st.bombard) h += `<div class="item">Bombardement läuft… ${Math.ceil(st.bombard.remaining)}s<div class="bar amber"><div style="width:${100 - st.bombard.remaining / st.bombard.total * 100}%"></div></div></div>`;
     h += `<div class="btns"><button class="warn" data-act="bombard" data-id="${pid}" ${!control || st.bombard ? 'disabled' : ''}${tip('Bombardieren', '60 Treibstoff · senkt Garnison')}>Bombardieren (60 Treibstoff)</button><button class="alert" data-act="land" data-id="${pid}" ${!control ? 'disabled' : ''}${tip('Truppen landen', '150 Credits · 50 Treibstoff')}>Truppen landen (150 Cr, 50 Tr)</button></div>`;
-    if (pf.length) h += `<div class="stats">Landungstruppen: ca. ${troopStrength(pf)} · Erfolg wahrscheinlich, wenn deutlich über der Garnison.</div>`;
+    h += `<div class="item"><div class="top"><span>Belagerung ${Math.round(st.siege || 0)}%</span>${st.supplyCut ? '<span class="badge blue">Nachschub abgeschnitten</span>' : ''}</div><div class="bar amber"><div style="width:${st.siege || 0}%"></div></div><div class="stats">Orbit halten: Garnison sinkt, Landung bis +50%.</div></div>`;
+    if (pf.length) h += `<div class="stats">Landungstruppen: ca. ${troopStrength(pf, st)} (davon Armee ${Math.round(armyPower(state, st))}) · Erfolg wahrscheinlich, wenn deutlich über der Garnison.</div>`;
   } else {
     // Unbesiedelt → Erkunden / Kolonisieren
     const pf = fleetsIn(state, st.system, 'player');
@@ -104,10 +112,11 @@ function planetHtml(state, ui, pid) {
     </div>`;
     if (pf.length && !hasColony) h += `<div class="amber">Kein Kolonieschiff in der Flotte. Baue eines in einer Raumwerft.</div>`;
   }
+  if (RUINS[pid]) { const R = RUINS[pid]; const run = state.expeditions.find(e => e.planet === pid); h += `<h3>Ruinen der Torbauer</h3><div class="item"><b>${R.name}</b><div class="stats">${state.ruinsDone[pid] ? R.text : 'Unerforscht – Expedition mit Flotte im System.'}</div>${run ? `<div class="bar"><div style="width:${100 - run.remaining / run.total * 100}%"></div></div>` : ''}<div class="btns"><button data-act="expedition" data-id="${pid}" ${state.ruinsDone[pid] || run || !fleetsIn(state, st.system, 'player').length ? 'disabled' : ''}${tip('Expedition', '60 Treibstoff · 40 Credits · 30 s · Risiko: Wächter')}>Expedition (60 Tr, 40 Cr)</button></div></div>`; }
   h += `<div class="btns"><button data-act="deselect">Zurück zum System</button></div>`;
   return h;
 }
-function shipTip(t) { return { jaeger: 'stark gg. Bomber', bomber: 'stark gg. Großkampfschiffe', fregatte: 'Flak: stark gg. Jäger', zerstoerer: 'stark gg. Fregatten', kolonie: 'zivil – gründet Kolonien' }[t] || ''; }
+function shipTip(t) { return { jaeger: 'stark gg. Bomber', bomber: 'stark gg. Großkampfschiffe', fregatte: 'Flak: stark gg. Jäger', zerstoerer: 'stark gg. Fregatten', kolonie: 'zivil – gründet Kolonien', reparatur: 'zivil – repariert & birgt', traeger: 'startet 4 Jagddrohnen', flaggschiff: 'einzigartig – Superwaffe (Flächenschaden)' }[t] || ''; }
 
 export function techHtml(state) {
   const q = state.tech?.queue;
@@ -138,11 +147,12 @@ export function rightHtml(state, ui) {
   for (const f of mine) {
     const sel = ui.selectedFleet === f.id;
     const where = f.inBattle ? `<span class="red">im Gefecht in ${sysById(f.system).name}</span>` : f.move ? `<span class="amber">${sysById(f.move.from).name} → ${sysById(f.move.to).name}${f.move.path.length ? ' → … ' + sysById(f.move.path[f.move.path.length - 1]).name : ''}</span>` : `in ${sysById(f.system).name}${f.cooldown > 0 ? ` <span class="muted">(Tor-Abkühlung ${Math.ceil(f.cooldown)}s)</span>` : ''}`;
-    h += `<div class="item ${sel ? 'sel' : ''}" data-act="selfleet" data-id="${f.id}"><div class="top"><b>${f.name}</b><span class="muted">Stärke ${fleetPower(f.ships)}</span></div><div class="stats">${where}</div><div class="stats">${shipsHtml(f.ships)}${f.vet ? ` · <span class="amber">Veteran ${'★'.repeat(f.vet)}</span>` : ''}</div>${f.move ? `<div class="bar"><div style="width:${f.move.t / f.move.total * 100}%"></div></div>` : ''}
-      ${sel ? `<div class="btns"><button data-act="split" data-id="${f.id}">Teilen</button><button data-act="merge" data-id="${f.id}">Zusammenlegen</button><button data-act="rename" data-id="${f.id}">Umbenennen</button><button data-act="crew" data-id="${f.id}" ${state.crews < 1 || (f.vet || 0) >= 5 ? 'disabled' : ''} title="1 Crew: +5% Schaden">Crew zuweisen (${Math.floor(state.crews)})</button></div><div class="stats blue">Ziel wählen: System auf der Karte anklicken → „hierher senden“.</div>` : ''}</div>`;
+    h += `<div class="item ${sel ? 'sel' : ''}" data-act="selfleet" data-id="${f.id}"><div class="top"><b>${f.name}</b><span class="muted">Stärke ${fleetPower(f.ships)}</span></div><div class="stats">${where}</div><div class="stats">${shipsHtml(f.ships)}${f.vet ? ` · <span class="amber">Veteran ${'★'.repeat(f.vet)}</span>` : ''}${f.patrol ? ' · <span class="blue">Torpatrouille</span>' : ''}${f.intercept ? ' · <span class="amber">Abfangbereit</span>' : ''}</div>${f.move ? `<div class="bar"><div style="width:${f.move.t / f.move.total * 100}%"></div></div>` : ''}
+      ${sel ? `<div class="btns"><button data-act="split" data-id="${f.id}">Teilen</button><button data-act="merge" data-id="${f.id}">Zusammenlegen</button><button data-act="rename" data-id="${f.id}">Umbenennen</button><button data-act="crew" data-id="${f.id}" ${state.crews < 1 || (f.vet || 0) >= 5 ? 'disabled' : ''} title="1 Crew: +5% Schaden">Crew zuweisen (${Math.floor(state.crews)})</button><button data-act="patrol" data-id="${f.id}" class="${f.patrol ? 'active' : ''}" title="Stellt Draxis-Flotten am Tor, +10% Moral · kostet Treibstoff">Patrouille</button><button data-act="intercept" data-id="${f.id}" class="${f.intercept ? 'active' : ''}" title="Fängt entgegenkommende Flotten auf der Route ab">Abfangen</button></div><div class="stats blue">Ziel wählen: System auf der Karte anklicken → „hierher senden“.</div>` : ''}</div>`;
   }
-  const threats = state.fleets.filter(f => f.owner === 'ai' && f.role === 'attack' && f.move);
-  if (threats.length) h += `<h3 class="red">Bedrohungen</h3>` + threats.map(f => `<div class="item"><span class="red">${f.name}</span> <span class="muted">${shipCount(f)} Schiffe · ${sysById(f.move.from).name} → ${sysById(f.move.to).name}</span></div>`).join('');
+  const threats = state.fleets.filter(f => f.owner === 'ai' && (f.role === 'attack' || f.role === 'raid') && f.move);
+  if (state.battleQueue?.length) h += `<h3 class="red">Warteschlange: ${state.battleQueue.length} Gefecht(e)</h3><div class="btns"><button data-act="panel" data-id="war">Ansehen</button></div>`;
+  if (threats.length) h += `<h3 class="red">Bedrohungen</h3>` + threats.map(f => `<div class="item"><span class="red">${f.name}</span> <span class="muted">${fleetStrengthText(state, f, techEffects(state))} · ${sysById(f.move.from).name} → ${sysById(f.move.to).name}</span></div>`).join('');
   return h;
 }
 
@@ -153,9 +163,9 @@ export function battleBarsHtml(b) {
     return `<div class="side panel"><div style="display:flex;justify-content:space-between"><b class="${cls}">${name}</b><span>${n}/${total} Schiffe</span></div>
       <div class="stats">Hülle</div><div class="bar ${s === 'ai' ? 'red' : ''}"><div style="width:${hull / max * 100}%"></div></div>
       <div class="stats">Schilde</div><div class="bar"><div style="width:${shm ? sh / shm * 100 : 0}%;background:#9fe6ff"></div></div>
-      <div class="stats">Moral ${Math.round(b.morale[s] * 100)}%</div></div>`;
+      <div class="stats">Moral ${Math.round(b.morale[s] * 100)}%</div>${moduleDamage(b, s) ? `<div class="stats amber">Module beschädigt: ${moduleDamage(b, s)}</div>` : ''}</div>`;
   };
-  return side('player', 'Deine Flotte', 'blue') + side('ai', 'Draxis-Imperium', 'red');
+  return side('player', 'Deine Flotte', 'blue') + side('ai', 'Draxis-Imperium', 'red') + (b.log?.length ? `<div class="side panel blog">${b.log.slice(0, 3).map(l => `<div class="stats">${l}</div>`).join('')}</div>` : '');
 }
 
 export function reportHtml(r) {
@@ -166,6 +176,8 @@ export function reportHtml(r) {
     <table><tr><th>Typ</th><th>Eigene</th><th>Verloren</th><th>Feind</th><th>Zerstört</th></tr>
     ${types.map(t => `<tr><td>${SHIPS[t]?.name || t}</td><td>${r.start.player[t] || 0}</td><td class="red">${r.lost.player[t] || 0}</td><td>${r.start.ai[t] || 0}</td><td class="blue">${r.lost.ai[t] || 0}</td></tr>`).join('')}</table>
     ${r.repaired && Object.keys(r.repaired).length ? `<div class="blue">Reparaturschiffe retteten: ${Object.entries(r.repaired).map(([t, n]) => `${n}× ${SHIPS[t]?.name || t}`).join(', ')}</div>` : ''}
+    ${r.pods ? `<div class="stats">Rettungskapseln: ${r.pods.saved} eigene Besatzungen gerettet${r.pods.captured ? ` · ${r.pods.captured} Feinde gefangen` : ''}${r.wrecks ? ` · +${r.wrecks} Wrackdaten` : ''}</div>` : ''}
+    ${r.moraleEvents?.length ? `<div class="stats amber">${r.moraleEvents.slice(0, 3).join(' · ')}</div>` : ''}
     <h3>Geborgene Wracks</h3><div>${r.winner === 'player' ? `${r.salvage.erz} Erz · ${r.salvage.treibstoff} Treibstoff · ${r.salvage.credits} Credits` : '<span class="muted">Keine Bergung – das Schlachtfeld gehört dem Gegner.</span>'}</div>
     <div class="btns" style="margin-top:12px"><button data-act="closemodal">Schließen</button></div>`;
 }
@@ -179,7 +191,7 @@ export function offlineHtml(o) {
 }
 
 export function factionPickerHtml() {
-  return `<h2>Fraktion wählen</h2><p class="muted">Gatebreaker v0.2 – wähle dein Startimperium. Die Wahl wird gespeichert.</p>
+  return `<h2>Fraktion wählen</h2><p class="muted">Gatebreaker v0.4 – wähle dein Startimperium. Die Wahl wird gespeichert.</p>
     ${FACTION_ORDER.map(id => { const f = FACTIONS[id]; return `<div class="item"><div class="top"><b>${f.name}</b><button data-act="pickfaction" data-id="${id}">Wählen</button></div>
       <div class="stats">${f.desc}</div><div class="blue">＋ ${f.bonus}</div><div class="amber">− ${f.malus}</div></div>`; }).join('')}
     <p class="muted" style="margin-top:8px">Eigene Fraktion aus Punkten folgt später.</p>`;

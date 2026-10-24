@@ -37,5 +37,5 @@ const rich = st => Object.assign(st.res, { erz: 9000, treibstoff: 5000, credits:
   ok(r2.credits < r1 && S.rates(st).eProd < 3, 'Heimatwelt-Boni gehen verloren'); }
 
 if (globalThis.__extraTests) await globalThis.__extraTests(S, ok, run, rich);
-const extra = await import('./unit-extra.mjs').catch(() => null); if (extra?.default) await extra.default(S, ok, run, rich);
+const extra = await import('./unit-extra.mjs').catch(e => { console.log('  ✘ unit-extra:', e.message); fails++; return null; }); if (extra?.default) await extra.default(S, ok, run, rich);
 console.log(fails ? `UNIT FEHLER (${fails})` : 'UNIT OK'); process.exit(fails ? 1 : 0);
