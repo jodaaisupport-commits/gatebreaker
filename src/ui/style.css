@@ -79,3 +79,4 @@ body.touch button { min-height: 32px; }
 .item.done { opacity: 0.75; border-color: rgba(79,195,255,.35); }
 .item.locked { opacity: 0.45; }
 .badge.amber { color: var(--amber); border-color: var(--amber); }
+#left input[type=text] { width:54px; }

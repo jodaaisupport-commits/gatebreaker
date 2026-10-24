@@ -1,9 +1,11 @@
 // Spiellogik: Zustand, Tick, Aktionen. Kein DOM, kein Three.js – kann später 1:1 auf einen Node/WebSocket-Server wandern.
+import { BUILDING_ORDER } from './data.js';
 import { SYSTEMS, GATES, BUILDINGS, SHIPS, SHIP_ORDER, buildingCost, buildingTime, TRAVEL_TIME, GATE_COOLDOWN, OFFLINE_CAP, RES, FACTIONS, TUTORIAL, TECHS, TECH_ORDER } from './data.js';
+import { initEmpire, empireRates, applyRates, empireTick, plunderShare, empireActions, breakTreaty, initPlanet, homeHeld } from './empire.js';
 import { createBattle, stepBattle, autoResolve, survivors, defaultSettings } from './battleSim.js';
 
 export const SAVE_KEY = 'gatebreaker-save-v2';
-export const emptyBuildings = () => ({ mine: 0, raffinerie: 0, kraftwerk: 0, werft: 0, abwehr: 0 });
+export const emptyBuildings = () => Object.fromEntries(BUILDING_ORDER.map(k => [k, 0]));
 
 export function newGame(now = Date.now(), factionId = 'bergbau') {
   const fac = FACTIONS[factionId] || FACTIONS.bergbau;
@@ -16,8 +18,8 @@ export function newGame(now = Date.now(), factionId = 'bergbau') {
   const res = { erz: 350, treibstoff: 180, energie: 80, credits: 250 };
   for (const r in fac.startRes) res[r] += fac.startRes[r];
   const done = [...(fac.startTech || [])];
-  return {
-    version: 2, time: 0, lastSave: now, nextId: 10, faction: factionId,
+  const st = {
+    version: 3, time: 0, lastSave: now, nextId: 10, faction: factionId,
     res,
     planets,
     fleets: [
@@ -33,6 +35,8 @@ export function newGame(now = Date.now(), factionId = 'bergbau') {
     flags: { wonBattle: false },
     events: [],
   };
+  initEmpire(st);
+  return st;
 }
 
 // ---------- Hilfen ----------
@@ -54,6 +58,7 @@ export function fleetsIn(state, sys, owner) { return state.fleets.filter(f => f.
 export function playerVisible(state, sys) {
   if (fleetsIn(state, sys, 'player').length > 0 || Object.values(state.planets).some(p => p.system === sys && p.owner === 'player')) return true;
   // Sensoren: angrenzende Systeme zu eigener Präsenz sichtbar (kein Rekursion)
+  for (const n of neighbors(sys)) if (Object.values(state.planets).some(p => p.system === n && p.owner === 'player' && p.buildings?.sensor > 0)) return true;
   if (hasTech(state, 'sci_sensoren')) {
     for (const n of neighbors(sys)) {
       if (fleetsIn(state, n, 'player').length > 0 || Object.values(state.planets).some(p => p.system === n && p.owner === 'player')) return true;
@@ -91,29 +96,7 @@ export function canResearch(state, id) {
 }
 
 // ---------- Wirtschaft (alle eigenen Planeten mit Gebäuden) ----------
-export function rates(state) {
-  const fx = techEffects(state);
-  let mines = 0, raff = 0, kraft = 0, werft = 0, abwehr = 0;
-  for (const p of Object.values(state.planets)) {
-    if (p.owner !== 'player' || !p.buildings) continue;
-    mines += p.buildings.mine || 0; raff += p.buildings.raffinerie || 0;
-    kraft += p.buildings.kraftwerk || 0; werft += p.buildings.werft || 0; abwehr += p.buildings.abwehr || 0;
-  }
-  const bareColonies = Object.values(state.planets).filter(p => p.owner === 'player' && !p.buildings).length;
-  const eProd = 3.2 * kraft + 0.5 * bareColonies;
-  const eCons = 1.0 * (mines + raff) + 1.5 * werft + 0.8 * abwehr;
-  const eNet = eProd - eCons;
-  const eff = (eNet >= 0 || state.res.energie > 0) ? 1 : Math.max(0.3, eProd / Math.max(1, eCons));
-  let upkeep = 0; const UP = { jaeger: 0.01, bomber: 0.02, fregatte: 0.05, zerstoerer: 0.1, kolonie: 0.08 };
-  for (const f of state.fleets) if (f.owner === 'player') for (const t in f.ships) upkeep += (f.ships[t] || 0) * (UP[t] || 0);
-  return {
-    erz: (2.2 * mines * fx.mineMult + 1.0 * bareColonies) * eff,
-    treibstoff: (1.1 * raff * fx.fuelMult + 0.4 * bareColonies) * eff,
-    energie: eNet,
-    credits: (1.2 + 0.25 * (mines + raff + kraft + werft) + 0.8 * bareColonies) * fx.creditMult - upkeep,
-    eff, upkeep, eProd, eCons, fx,
-  };
-}
+export function rates(state) { return empireRates(state); }
 
 function claimTutorial(state) {
   if (!state.tutorial) state.tutorial = { done: [], claimed: [] };
@@ -132,9 +115,10 @@ function claimTutorial(state) {
 // ---------- Tick ----------
 export function tick(state, dt, opts = {}) {
   migrate(state);
-  state.time += dt;
+  state.time += dt; state._offline = !!opts.offline;
   const r = rates(state);
-  for (const k of RES) state.res[k] = Math.max(0, state.res[k] + r[k] * dt);
+  applyRates(state, r, dt);
+  empireTick(state, dt, opts);
 
   // Forschung
   if (state.tech?.queue) {
@@ -264,7 +248,7 @@ function aiTick(state, dt) {
   if (ai.attackTimer <= 0) {
     ai.attackTimer = 360 + Math.random() * 180;
     const hf = state.fleets.find(f => f.owner === 'ai' && f.system === 'draxis' && !f.move && !f.inBattle);
-    if (hf && shipCount(hf) >= 6) {
+    if (hf && shipCount(hf) >= 6 && !state.diplo?.treaty && !(state.diplo?.peaceUntil > state.time)) {
       const atk = { id: state.nextId++, owner: 'ai', name: `Angriffswelle ${++ai.waves}`, ships: {}, system: 'draxis', move: null, cooldown: 0, role: 'attack' };
       for (const t in hf.ships) { const n = Math.floor(hf.ships[t] * 0.6); atk.ships[t] = n; hf.ships[t] -= n; }
       if (shipCount(atk) > 0) {
@@ -306,12 +290,14 @@ function checkEncounters(state, opts) {
     const mergeAll = (fl) => { const s = {}; for (const f of fl) for (const t in f.ships) s[t] = (s[t] || 0) + f.ships[t]; return s; };
     const sides = { player: { ships: mergeAll(pf), platforms: playerDef }, ai: { ships: mergeAll(af), platforms: aiPlanetsDef } };
     const fx = techEffects(state);
+    const vetMult = 1 + 0.05 * (pf.length ? Math.max(...pf.map(f => f.vet || 0)) : 0);
+    if (attacker === 'player' && af.length) breakTreaty(state, 'Du hast eine Draxis-Flotte angegriffen');
     const b = createBattle({ system: sys.id, sides, attacker, settings: { player: JSON.parse(JSON.stringify(state.battleSettings)) }, seed: (Math.random() * 1e9) | 0 });
     // Fraktions-/Tech-Boni auf Spielereinheiten anwenden
     for (const u of b.units) if (u.side === 'player') {
       u.maxHull = Math.round(u.maxHull * fx.hullMult); u.hull = u.maxHull;
       u.shield = Math.round(u.shield * fx.shieldMult);
-      u.dmgMult = fx.dmgMult;
+      u.dmgMult = fx.dmgMult * vetMult;
     }
     b.morale.player = Math.min(1.2, 1 + fx.moraleBonus);
     b.playerFleets = pf.map(f => f.id); b.aiFleets = af.map(f => f.id);
@@ -323,10 +309,16 @@ function checkEncounters(state, opts) {
 }
 
 function plunder(state, af) {
-  const share = 0.1; const loot = {};
+  const share = plunderShare(state); const loot = {};
   for (const r of ['erz', 'treibstoff', 'credits']) { loot[r] = Math.round(state.res[r] * share); state.res[r] -= loot[r]; }
   emit(state, 'alert', `Helios wurde geplündert! Verloren: ${loot.erz} Erz, ${loot.treibstoff} Treibstoff, ${loot.credits} Credits. Baue Abwehrplattformen oder halte eine Flotte daheim.`);
   for (const f of af) { f.done = true; f.role = 'attack'; }
+  // Heimatwelt-Eroberung (nur online): große Welle gegen schwache Garnison
+  const hp = homePlanet(state); const n = af.reduce((a, f) => a + shipCount(f), 0);
+  if (hp && !state._offline && n >= 20 && (hp.garrison || 0) < n * 4) {
+    hp.owner = 'ai'; hp.garrison = 80; hp.defense = 1; hp.queue = []; hp.shipQueue = []; state.homeLost = true;
+    emit(state, 'alert', `Heimatwelt ${planetName(hp.id)} gefallen! Heimatboni verloren (+1 Cr/s, +2 Energie, +1000 Lager, +20 Wohnraum). Erobere sie zurück!`);
+  }
 }
 
 function applySurvivors(state, ids, surv) {
@@ -338,7 +330,11 @@ function applySurvivors(state, ids, surv) {
 export function finishBattle(state, b, auto) {
   const sp = survivors(b, 'player'), sa = survivors(b, 'ai');
   // Kolonieschiffe die nicht im Kampf waren? Sie waren in survivors wenn alive
+  // Reparaturschiffe bergen beschädigte Schiffe (2 je Reparaturschiff)
+  let rep = 2 * (sp.ships.reparatur || 0); const repaired = {};
+  if (rep) for (const t of ['zerstoerer', 'fregatte', 'bomber', 'jaeger', 'kolonie']) while (rep > 0 && (b.lost.player[t] || 0) > (repaired[t] || 0)) { repaired[t] = (repaired[t] || 0) + 1; sp.ships[t] = (sp.ships[t] || 0) + 1; rep--; }
   const pFleet = applySurvivors(state, b.playerFleets || [], sp.ships);
+  if (pFleet) pFleet.vet = Math.max(0, ...state.fleets.filter(f => (b.playerFleets || []).includes(f.id)).map(f => f.vet || 0));
   const aFleet = applySurvivors(state, b.aiFleets || [], sa.ships);
   // Plattformen auf allen eigenen Planeten im System
   if (b.start.player.plattform) {
@@ -363,7 +359,7 @@ export function finishBattle(state, b, auto) {
   if (b.retreat && pFleet) { const back = neighbors(b.system).find(n => n !== b.system); pFleet.move = { from: b.system, to: b.retreatTo || back, t: 0, total: travelTime(pFleet, state), path: [] }; }
   if (aFleet && b.winner === 'player' && shipCount(aFleet) > 0) { const p = path(b.system, 'draxis'); if (p && p.length) { aFleet.move = { from: b.system, to: p.shift(), t: 0, total: travelTime(aFleet, state), path: p }; aFleet.role = 'return'; } }
   if (aFleet && b.winner === 'ai' && aFleet.role === 'attack') aFleet.done = true;
-  const report = { system: b.system, systemName: sysById(b.system).name, winner: b.winner, retreat: !!b.retreat, auto, duration: Math.round(b.time), start: b.start, lost: b.lost, salvage, time: state.time };
+  const report = { system: b.system, systemName: sysById(b.system).name, winner: b.winner, retreat: !!b.retreat, auto, duration: Math.round(b.time), start: b.start, lost: b.lost, salvage, repaired, time: state.time };
   state.lastReport = report;
   if (state.battle === b) state.battle = null;
   emit(state, b.winner === 'player' ? 'info' : 'alert', `${auto ? 'Automatisches Gefecht' : 'Schlacht'} in ${report.systemName}: ${b.winner === 'player' ? 'Sieg' : (b.retreat ? 'Rückzug' : 'Niederlage')}.`, { report: true, auto });
@@ -417,20 +413,22 @@ export const actions = {
     if (fleetsIn(state, p.system, 'ai').length || p.defense > 0) return 'Orbit nicht unter Kontrolle (Flotte/Abwehr aktiv).';
     if (p.bombard) return 'Bombardement läuft bereits.';
     if (state.res.treibstoff < 60) return '60 Treibstoff nötig.';
-    state.res.treibstoff -= 60; p.bombard = { remaining: 8, total: 8 }; return null;
+    state.res.treibstoff -= 60; p.bombard = { remaining: 8, total: 8 }; breakTreaty(state, `Bombardement von ${planetName(p.id)}`); return null;
   },
   landTroops(state, planetId) {
     const p = state.planets[planetId]; if (!p || p.owner !== 'ai') return 'Kein feindlicher Planet.';
     const pf = fleetsIn(state, p.system, 'player'); if (!pf.length) return 'Keine eigene Flotte im Orbit.';
     if (fleetsIn(state, p.system, 'ai').length || p.defense > 0) return 'Orbit nicht unter Kontrolle.';
     const cost = { credits: 150, treibstoff: 50 }; if (!canAfford(state, cost)) return '150 Credits und 50 Treibstoff nötig.';
-    pay(state, cost);
+    pay(state, cost); breakTreaty(state, `Invasion von ${planetName(p.id)}`);
     const troops = pf.reduce((a, f) => a + 40 + 3 * (f.ships.jaeger || 0) + 4 * (f.ships.bomber || 0) + 10 * (f.ships.fregatte || 0) + 16 * (f.ships.zerstoerer || 0), 0);
     const roll = troops * (0.8 + Math.random() * 0.4);
     if (roll > p.garrison) {
       p.owner = 'player'; p.garrison = Math.round(roll - p.garrison); p.bombard = null; p.colonized = false;
       // Eroberte Planeten bekommen volle Bauverwaltung (Startstufe 0, Kraftwerk 1)
-      p.buildings = emptyBuildings(); p.buildings.kraftwerk = 1; p.queue = []; p.shipQueue = [];
+      if (!(p.home && p.buildings && p.id !== 'draxis-prime')) { p.buildings = emptyBuildings(); p.buildings.kraftwerk = 1; } p.queue = []; p.shipQueue = [];
+      p.pop = p.home ? Math.max(p.pop || 0, 8) : 5; p.sat = 50; p.laws = null; p.governor = null; initPlanet(p);
+      if (p.home && p.id !== 'draxis-prime') { state.homeLost = false; emit(state, 'info', 'Heimatwelt zurückerobert – Heimatboni wieder aktiv.'); }
       emit(state, 'info', `Bodentruppen siegreich: ${planetName(p.id)} gehört jetzt dir! Gebäudeverwaltung freigeschaltet.`);
       claimTutorial(state); return null;
     }
@@ -454,6 +452,7 @@ export const actions = {
     p.buildings = emptyBuildings();
     if (faction(state).colonyBonusMine) p.buildings.mine = 1;
     p.buildings.kraftwerk = 1; p.queue = []; p.shipQueue = [];
+    p.pop = 4; p.sat = 70; p.laws = null; initPlanet(p);
     emit(state, 'info', `${planetName(p.id)} kolonisiert! Kolonie gegründet.`);
     claimTutorial(state); return null;
   },
@@ -469,6 +468,7 @@ export const actions = {
     if (state.battle) Object.assign(state.battle.settings.player, JSON.parse(JSON.stringify(state.battleSettings)));
     return null;
   },
+  ...empireActions,
   setBattleSpeed(state, spd) { state.battleSpeed = spd === 2 ? 2 : 1; return null; },
   retreat(state) {
     const b = state.battle; if (!b) return 'Keine Schlacht.';
@@ -492,6 +492,7 @@ function migrate(state) {
     if (!p.queue) p.queue = []; if (!p.shipQueue) p.shipQueue = [];
   }
   for (const f of state.fleets) if (f.ships && f.ships.kolonie == null) f.ships.kolonie = 0;
+  if (!state._empire) { initEmpire(state); state._empire = true; }
 }
 
 export function save(state, storage, now = Date.now()) {

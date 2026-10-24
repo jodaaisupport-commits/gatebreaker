@@ -7,6 +7,7 @@ await wait(2500);
 const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1600,900'] });
 const errors = []; let ok = true;
 const log = (...a) => console.log('•', ...a);
+const act = (page, sel) => page.evaluate(q => { const e = document.querySelector(q); if (!e) throw new Error('fehlt: ' + q); e.click(); }, sel);
 const check = (cond, msg) => { console.log(cond ? '  ✔' : '  ✘', msg); if (!cond) ok = false; };
 try {
   const page = await browser.newPage(); await page.setViewport({ width: 1600, height: 900 });
@@ -18,7 +19,7 @@ try {
   await wait(800);
   // Fraktionswahl (v0.2)
   check(await page.$('[data-act="pickfaction"]'), 'Fraktionswahl sichtbar');
-  await page.click('[data-act="pickfaction"][data-id="bergbau"]'); await wait(600);
+  await act(page, '[data-act="pickfaction"][data-id="bergbau"]'); await wait(600);
   check(await page.evaluate(() => gb.state.faction === 'bergbau' && document.querySelector('#modal').classList.contains('hidden')), 'Bergbaukonzern gewählt, Modal zu');
   log('Ressourcen:', await page.$eval('#resources', e => e.innerText.replace(/\n/g, ' ')));
   check(await page.evaluate(() => !!document.querySelector('canvas') && gb.state.time > 0), 'Spiel läuft, Zeit tickt');
@@ -33,17 +34,24 @@ try {
   await wait(300);
   check(await page.evaluate(() => gb.state.tech.queue?.id === 'eco_minen'), 'Forschung gestartet');
 
+  // Imperium-Panel (v0.3)
+  await page.click('#btn-empire'); await wait(400);
+  check(await page.evaluate(() => gb.ui.panel === 'empire' && document.querySelector('#left').innerText.includes('MARKT')), 'Imperium-Panel (Markt/Lager/Energie)');
+  await act(page, '[data-act="sell"][data-id="erz"]'); await wait(200);
+  check(await page.evaluate(() => gb.state.market.erz < 1), 'Markt-Verkauf per Klick');
+  await page.evaluate(() => { gb.ui.panel = 'main'; }); await wait(200);
   // System betreten, Werft bauen
-  await page.click('[data-act="enter"]'); await wait(600);
+  await act(page, '[data-act="enter"]'); await wait(600);
   check(await page.evaluate(() => gb.ui.view === 'system'), 'Systemansicht geöffnet');
   await page.evaluate(() => { gb.ui.selectedPlanet = 'helios-prime'; }); await wait(400);
-  await page.click('[data-act="build"][data-id="werft"]'); await wait(300);
+  await act(page, '[data-act="build"][data-id="werft"]'); await wait(300);
   check(await page.evaluate(() => gb.state.planets['helios-prime'].queue.length === 1), 'Werft in Bauliste');
   await page.evaluate(() => { for (let i = 0; i < 20; i++) gb.Sim.tick(gb.state, 1); }); await wait(400);
   check(await page.evaluate(() => gb.state.planets['helios-prime'].buildings.werft === 1), 'Werft fertig');
   check(await page.evaluate(() => gb.state.tutorial.claimed.includes('werft')), 'Tutorial: Werft belohnt');
+  check(await page.evaluate(() => document.querySelector('#left').innerText.includes('GESETZE') && !!document.querySelector('[data-act="hiregov"]')), 'Planet: Gesetze & Gouverneur sichtbar');
   await page.evaluate(() => Object.assign(gb.state.res, { erz: 5000, treibstoff: 3000, credits: 3000 })); await wait(400);
-  for (const t of ['fregatte', 'bomber', 'jaeger', 'kolonie']) { await page.click(`[data-act="ship"][data-id="${t}"][data-n="5"]`); await wait(150); }
+  for (const t of ['fregatte', 'bomber', 'jaeger', 'kolonie']) { await act(page, `[data-act="ship"][data-id="${t}"][data-n="5"]`); await wait(150); }
   await page.evaluate(() => { gb.Sim.tick(gb.state, 3); });
   await wait(2500);
   await page.screenshot({ path: 'screenshots/02-system-planet.png' });
@@ -63,7 +71,7 @@ try {
   // Flotte nach Vortex senden
   await page.keyboard.press('g'); await wait(300);
   await page.evaluate(() => { gb.ui.selectedSystem = 'vortex'; gb.ui.selectedFleet = gb.state.fleets.find(f => f.owner === 'player').id; }); await wait(400);
-  await page.click('[data-act="move"]'); await wait(1000);
+  await act(page, '[data-act="move"]'); await wait(1000);
   await page.screenshot({ path: 'screenshots/01b-galaxie-flotte-unterwegs.png' });
   await page.evaluate(() => { for (let i = 0; i < 14; i++) gb.Sim.tick(gb.state, 1); });
   await page.waitForFunction(() => gb.state.battle && gb.ui.view === 'battle', { timeout: 8000 });
@@ -83,17 +91,17 @@ try {
   await page.screenshot({ path: 'screenshots/04-bericht.png' });
 
   // Erobern + Gebäude auf erobertem Planeten
-  await page.click('[data-act="closemodal"]'); await page.keyboard.press('g'); await wait(200);
+  await act(page, '[data-act="closemodal"]'); await page.keyboard.press('g'); await wait(200);
   await page.evaluate(() => { gb.ui.selectedSystem = 'vortex'; }); await page.keyboard.press('s'); await wait(400);
   await page.evaluate(() => { gb.ui.selectedPlanet = 'vortex-a'; }); await wait(400);
-  await page.click('[data-act="bombard"]');
+  await act(page, '[data-act="bombard"]');
   await page.evaluate(() => { for (let i = 0; i < 10; i++) gb.Sim.tick(gb.state, 1); }); await wait(400);
-  await page.click('[data-act="land"]'); await wait(800);
+  await act(page, '[data-act="land"]'); await wait(800);
   const owner = await page.evaluate(() => gb.state.planets['vortex-a'].owner);
   check(owner === 'player', 'Relikt erobert (Besitzer: ' + owner + ')');
   check(await page.evaluate(() => !!gb.state.planets['vortex-a'].buildings && gb.state.planets['vortex-a'].buildings.kraftwerk >= 1), 'Eroberter Planet hat Gebäudeverwaltung');
   await page.evaluate(() => Object.assign(gb.state.res, { erz: 2000, credits: 2000, treibstoff: 500, energie: 100 })); await wait(300);
-  await page.click('[data-act="build"][data-id="mine"]'); await wait(200);
+  await act(page, '[data-act="build"][data-id="mine"]'); await wait(200);
   check(await page.evaluate(() => gb.state.planets['vortex-a'].queue.some(q => q.key === 'mine')), 'Mine auf erobertem Planeten in Bauliste');
   await page.screenshot({ path: 'screenshots/05-eroberung.png' });
 

@@ -53,6 +53,7 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'g') setView('galaxy'); else if (k === 's') setView('system'); else if (k === 'b') setView('battle'); else if (k === 't') R.toggleTactical();
   else if (k === 'f') { ui.panel = ui.panel === 'tech' ? 'main' : 'tech'; dirty = true; }
+  else if (k === 'i') { ui.panel = ui.panel === 'empire' ? 'main' : 'empire'; dirty = true; }
   else if (k === 'escape') { closeModal(); ui.selectedPlanet = null; ui.panel = 'main'; dirty = true; }
 });
 document.querySelectorAll('#views [data-view]').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
@@ -62,6 +63,7 @@ $('#btn-new').addEventListener('click', () => {
   openModal(factionPickerHtml());
 });
 $('#btn-report').addEventListener('click', () => state.lastReport ? openModal(reportHtml(state.lastReport)) : toast('info', 'Noch kein Gefechtsbericht.'));
+$('#btn-empire')?.addEventListener('click', () => { ui.panel = ui.panel === 'empire' ? 'main' : 'empire'; dirty = true; flush(); });
 $('#btn-tech')?.addEventListener('click', () => { ui.panel = ui.panel === 'tech' ? 'main' : 'tech'; dirty = true; flush(); });
 
 // ---------- Auswahl in 3D ----------
@@ -105,7 +107,18 @@ function act(name, id, el) {
     case 'survey': err = Sim.actions.survey(state, id); break;
     case 'colonize': err = Sim.actions.colonize(state, id); break;
     case 'research': err = Sim.actions.research(state, id); break;
-    case 'panel': ui.panel = id === 'tech' ? 'tech' : 'main'; break;
+    case 'panel': ui.panel = id || 'main'; break;
+    case 'law': err = Sim.actions.setLaw(state, id, el.dataset.law, el.dataset.val); break;
+    case 'hiregov': err = Sim.actions.hireGovernor(state, id, el.dataset.trait); break;
+    case 'firegov': err = Sim.actions.fireGovernor(state, id); break;
+    case 'crew': err = Sim.actions.assignCrew(state, +id); break;
+    case 'buy': err = Sim.actions.trade(state, id, 'buy', 100); break;
+    case 'sell': err = Sim.actions.trade(state, id, 'sell', 100); break;
+    case 'addorder': err = Sim.actions.addOrder(state, $('#ord-res').value, $('#ord-mode').value, $('#ord-th').value, $('#ord-am').value); break;
+    case 'delorder': err = Sim.actions.removeOrder(state, id); break;
+    case 'eprio': err = Sim.actions.energyPrioUp(state, id); break;
+    case 'treaty': err = Sim.actions.proposeTreaty(state); break;
+    default: if (window.gbActs?.[name]) err = window.gbActs[name](state, id, el, ui);
     case 'pickfaction': startWithFaction(id); return;
     case 'deselect': ui.selectedPlanet = null; ui.panel = 'main'; break;
     case 'closemodal': closeModal(); break;
@@ -157,7 +170,8 @@ function setHtml(sel, html) { if (cache[sel] !== html) { cache[sel] = html; $(se
 function flush() {
   if (!state) return;
   setHtml('#resources', resourcesHtml(state));
-  if (!holding) { setHtml('#left', leftHtml(state, ui)); setHtml('#right', rightHtml(state, ui)); }
+  const ae = document.activeElement; const typing = ae && ae.matches?.('input,select') && $('#left').contains(ae);
+  if (!holding && !typing) { setHtml('#left', leftHtml(state, ui)); setHtml('#right', rightHtml(state, ui)); }
   $('#btn-battle').classList.toggle('hidden', !state.battle);
   if (state.battle && ui.view === 'battle') setHtml('#battle-bars', battleBarsHtml(state.battle));
 }
@@ -165,7 +179,7 @@ function drainEvents() {
   for (const e of state.events) {
     if (e.battle) toast('alert', e.text, () => setView('battle'));
     else if (e.report) { if (!e.auto && !state.battle) openModal(reportHtml(state.lastReport)); else toast(e.level, e.text + ' (Klick: Bericht)', () => openModal(reportHtml(state.lastReport))); }
-    else toast(e.level, e.text);
+    else if (!e.quiet) toast(e.level, e.text);
   }
   state.events.length = 0;
 }

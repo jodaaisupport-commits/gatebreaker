@@ -110,6 +110,8 @@ export function stepBattle(b, dt) {
         const dx = goal.x - u.pos.x, dy = goal.y - u.pos.y, dz = goal.z - u.pos.z; const dl = Math.hypot(dx, dy, dz);
         if (dl > 0.3) { const s = Math.min(dl, speed * dt); u.pos.x += dx / dl * s; u.pos.y += dy / dl * s; u.pos.z += dz / dl * s; u.heading = { x: dx / dl, y: dy / dl, z: dz / dl }; }
       }
+      // Reparatur: heilt den am stärksten beschädigten Verbündeten in Reichweite
+      if (def.heal) { let w = null, wr = 1; for (const o of alive[side]) { if (o === u || SHIPS[o.type].static) continue; const r = o.hull / o.maxHull; if (r < wr && d3(o.pos, u.pos) < 45) { wr = r; w = o; } } if (w) w.hull = Math.min(w.maxHull, w.hull + def.heal * dt); }
       // Feuern
       u.cd -= dt;
       if (tgt && u.cd <= 0) {

@@ -155,3 +155,43 @@ SHIP_ORDER.push('kolonie');
 DMG_MULT.kolonie = { jaeger: 0.2, bomber: 0.2, fregatte: 0.2, zerstoerer: 0.2, plattform: 0.2, kolonie: 1 };
 for (const t of Object.keys(DMG_MULT)) if (t !== 'kolonie') DMG_MULT[t].kolonie = 1.5;
 EVADE.kolonie = 0.05;
+
+// ================= v0.3: Wirtschaft, Planeten, Bevölkerung =================
+RES.push('platten', 'teile');
+RES_LABEL.platten = 'Platten'; RES_LABEL.teile = 'Schiffsteile';
+Object.assign(BUILDINGS, {
+  wohnen:   { name: 'Wohnkomplex',     desc: 'Wohnraum +12 Bevölkerung.',                  base: { erz: 50,  treibstoff: 0,  credits: 40 }, time: 8,  cls: 'zivil' },
+  akademie: { name: 'Raumakademie',    desc: 'Bildet Crews aus (Veteranenbonus für Flotten).', base: { erz: 90, treibstoff: 20, credits: 70 }, time: 12, cls: 'militaer' },
+  walzwerk: { name: 'Walzwerk',        desc: 'Erz → Panzerplatten (1 Erz → 0,5 Platten/s).', base: { erz: 100, treibstoff: 20, credits: 50 }, time: 10, cls: 'produktion' },
+  fabrik:   { name: 'Teilefabrik',     desc: 'Platten → Schiffsteile (0,5 → 0,25/s).',      base: { erz: 140, treibstoff: 40, credits: 80 }, time: 12, cls: 'produktion' },
+  lager:    { name: 'Lagerhalle',      desc: 'Lagerkapazität +2000 je Rohstoff.',           base: { erz: 70,  treibstoff: 0,  credits: 30 }, time: 7,  cls: 'zivil' },
+  sensor:   { name: 'Sensorstation',   desc: 'Lichtet den Nebel in Nachbarsystemen.',       base: { erz: 80,  treibstoff: 20, credits: 60 }, time: 10, cls: 'zivil' },
+});
+for (const k of ['mine', 'raffinerie']) BUILDINGS[k].cls = 'produktion';
+BUILDINGS.kraftwerk.cls = 'energie'; BUILDINGS.werft.cls = 'militaer'; BUILDINGS.abwehr.cls = 'militaer';
+BUILDING_ORDER.push('wohnen', 'lager', 'walzwerk', 'fabrik', 'akademie', 'sensor');
+export const ENERGY_USE = { mine: 1, raffinerie: 1, walzwerk: 1.2, fabrik: 1.5, werft: 1.5, abwehr: 0.8, akademie: 1, wohnen: 0.3, lager: 0.2, sensor: 0.6, kraftwerk: 0 };
+export const ENERGY_CLASSES = { produktion: 'Produktion', militaer: 'Militär', zivil: 'Zivil' };
+
+// Reparaturschiff: heilt im Gefecht, birgt nach dem Kampf Schiffe
+SHIPS.reparatur = { name: 'Reparaturschiff', cost: { erz: 140, treibstoff: 60, credits: 80, platten: 20 }, time: 18, hull: 220, shield: 80, dmg: 1, rate: 3, range: 20, speed: 14, size: 2.2, weapon: 'laser', color: 0x99ffcc, civilian: true, heal: 7 };
+SHIP_ORDER.push('reparatur');
+DMG_MULT.reparatur = { jaeger: 0.2, bomber: 0.2, fregatte: 0.2, zerstoerer: 0.2, plattform: 0.2, kolonie: 1, reparatur: 1 };
+for (const t of Object.keys(DMG_MULT)) if (t !== 'reparatur') DMG_MULT[t].reparatur = 1.3;
+EVADE.reparatur = 0.08;
+// Produktionskette: Zerstörer brauchen Schiffsteile
+SHIPS.zerstoerer.cost = { ...SHIPS.zerstoerer.cost, teile: 10 };
+
+export const LAWS = {
+  arbeitszeit: { name: 'Arbeitszeit', opts: { kurz: 'Kurz (−15% Prod., +Zufr.)', normal: 'Normal', lang: 'Lang (+25% Prod., −Zufr.)' } },
+  wehrpflicht: { name: 'Wehrpflicht', opts: { aus: 'Aus', an: 'An (Garnison & Crews +, −Zufr.)' } },
+  kriegsrecht: { name: 'Kriegsrecht', opts: { aus: 'Aus', an: 'An (keine Revolten, −20% Credits, −Zufr.)' } },
+  einwanderung: { name: 'Einwanderung', opts: { geschlossen: 'Geschlossen', offen: 'Offen (Wachstum ×2, −Zufr.)' } },
+};
+export const GOV_TRAITS = {
+  industrie: { name: 'Industrieller', desc: 'Baut Minen, Walzwerke, Fabriken, Lager.', prefer: ['mine', 'walzwerk', 'raffinerie', 'fabrik', 'lager', 'kraftwerk'] },
+  militaer:  { name: 'General',       desc: 'Baut Abwehr, Werft, Akademie; Wehrpflicht.', prefer: ['abwehr', 'werft', 'akademie', 'kraftwerk'] },
+  volk:      { name: 'Volkstribun',   desc: 'Baut Wohnraum, hält die Bevölkerung zufrieden (+10).', prefer: ['wohnen', 'kraftwerk', 'lager', 'mine'] },
+};
+export const GOV_NAMES = ['Ilsa Varn', 'Torin Kade', 'Mara Quell', 'Joss Halder', 'Edda Rhun', 'Kael Strom', 'Nia Osk', 'Bren Tallow'];
+export const MARKET_BASE = { erz: 0.5, treibstoff: 1.0, energie: 0.8, platten: 1.8, teile: 4.5 };
